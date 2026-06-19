@@ -91,6 +91,24 @@ async fn main() -> std::io::Result<()> {
         }
     });
 
+    // 启动模型缓存更新任务（每小时更新一次）
+    let cache_state = reset_state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600)); // 每小时
+        loop {
+            interval.tick().await;
+            let endpoints: Vec<String> = {
+                let ep_map = cache_state.endpoints.read();
+                ep_map.keys().cloned().collect()
+            };
+            for endpoint_id in endpoints {
+                if let Err(e) = cache_state.fetch_endpoint_models(&endpoint_id).await {
+                    tracing::warn!("定时更新端点 {} 模型缓存失败: {}", endpoint_id, e);
+                }
+            }
+        }
+    });
+
     // 启动HTTP服务器
     let state_data = reset_state;
 

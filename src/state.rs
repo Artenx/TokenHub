@@ -2,7 +2,7 @@ use crate::models::*;
 use chrono::Utc;
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use tracing::info;
+use tracing::{debug, info, warn};
 
 /// 应用程序共享状态
 pub struct AppState {
@@ -14,6 +14,8 @@ pub struct AppState {
     pub scheduler_index: RwLock<HashMap<String, usize>>,
     /// 轮换模式下当前活跃端点索引
     pub failover_index: RwLock<HashMap<String, usize>>,
+    /// 端点模型列表缓存 (endpoint_id -> Vec<String>)
+    pub model_cache: RwLock<HashMap<String, Vec<String>>>,
     /// HTTP 客户端
     pub http_client: reqwest::Client,
     /// 配置文件管理器
@@ -39,6 +41,7 @@ impl AppState {
             endpoints: RwLock::new(endpoints),
             scheduler_index: RwLock::new(HashMap::new()),
             failover_index: RwLock::new(HashMap::new()),
+            model_cache: RwLock::new(HashMap::new()),
             http_client,
             config_manager,
         })
@@ -109,6 +112,7 @@ impl AppState {
             enabled: req.enabled.unwrap_or(true),
             pool_id: req.pool_id,
             timeout: req.timeout.unwrap_or(300),
+            model_mappings: req.model_mappings,
         };
         let state = EndpointState::new(config.clone());
 
@@ -156,6 +160,10 @@ impl AppState {
         }
         if let Some(timeout) = req.timeout {
             ep.config.timeout = timeout;
+        }
+        // 更新模型映射
+        if !req.model_mappings.is_empty() {
+            ep.config.model_mappings = req.model_mappings;
         }
         let state = ep.clone();
 
@@ -232,6 +240,7 @@ impl AppState {
             name: req.name,
             description: req.description.unwrap_or_default(),
             schedule_algorithm: req.schedule_algorithm,
+            model_mode: req.model_mode,
             exposed_api_id: req.exposed_api_id,
             created_at: Utc::now(),
         };
@@ -257,6 +266,7 @@ impl AppState {
             pool.description = desc;
         }
         pool.schedule_algorithm = req.schedule_algorithm;
+        pool.model_mode = req.model_mode;
         pool.exposed_api_id = req.exposed_api_id;
         let pool_clone = pool.clone();
 
@@ -425,6 +435,7 @@ impl AppState {
                 error_count: ep.error_count,
                 pool_id: ep.config.pool_id.clone(),
                 timeout: ep.config.timeout,
+                model_mappings: ep.config.model_mappings.clone(),
             })
             .collect();
 
@@ -441,6 +452,7 @@ impl AppState {
                 name: pool.name.clone(),
                 description: pool.description.clone(),
                 schedule_algorithm: pool.schedule_algorithm.clone(),
+                model_mode: pool.model_mode.clone(),
                 exposed_api_id: pool.exposed_api_id.clone(),
                 endpoint_count: pool_endpoints.len(),
                 active_endpoint_count: active_in_pool,
@@ -538,5 +550,125 @@ impl AppState {
     pub fn update_failover_index(&self, pool_id: &str, new_index: usize) {
         let mut index = self.failover_index.write();
         index.insert(pool_id.to_string(), new_index);
+    }
+
+    // ========== 模型缓存管理 ==========
+
+    /// 获取端点的模型列表缓存
+    pub fn get_cached_models(&self, endpoint_id: &str) -> Option<Vec<String>> {
+        let cache = self.model_cache.read();
+        cache.get(endpoint_id).cloned()
+    }
+
+    /// 更新端点的模型列表缓存
+    pub fn update_model_cache(&self, endpoint_id: &str, models: Vec<String>) {
+        let mut cache = self.model_cache.write();
+        cache.insert(endpoint_id.to_string(), models);
+        debug!("已更新端点 {} 的模型缓存", endpoint_id);
+    }
+
+    /// 清除端点的模型列表缓存
+    pub fn clear_model_cache(&self, endpoint_id: &str) {
+        let mut cache = self.model_cache.write();
+        cache.remove(endpoint_id);
+    }
+
+    /// 从 API 获取端点的模型列表
+    pub async fn fetch_endpoint_models(&self, endpoint_id: &str) -> anyhow::Result<Vec<String>> {
+        let endpoint = self.get_endpoint(endpoint_id)
+            .ok_or_else(|| anyhow::anyhow!("端点不存在: {}", endpoint_id))?;
+
+        let base_url = endpoint.config.url.trim_end_matches('/');
+        let models_url = if base_url.ends_with("/v1") || base_url.ends_with("/v1/") {
+            format!("{}/models", base_url)
+        } else {
+            format!("{}/v1/models", base_url)
+        };
+
+        let mut request_builder = self.http_client.get(&models_url)
+            .header("Content-Type", "application/json");
+
+        match endpoint.config.api_type {
+            ApiType::OpenAI | ApiType::OpenAIResponses => {
+                request_builder = request_builder.header("Authorization", format!("Bearer {}", endpoint.config.api_key));
+            }
+            ApiType::Anthropic => {
+                request_builder = request_builder.header("x-api-key", &endpoint.config.api_key);
+                request_builder = request_builder.header("anthropic-version", "2023-06-01");
+            }
+        }
+
+        match request_builder.timeout(std::time::Duration::from_secs(10)).send().await {
+            Ok(response) => {
+                if response.status().is_success() {
+                    let text = response.text().await.unwrap_or_default();
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                        if let Some(data) = json["data"].as_array() {
+                            let models: Vec<String> = data.iter()
+                                .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))
+                                .collect();
+                            // 更新缓存
+                            self.update_model_cache(endpoint_id, models.clone());
+                            return Ok(models);
+                        }
+                    }
+                }
+                Ok(vec![])
+            }
+            Err(e) => {
+                warn!("获取端点 {} 模型列表失败: {}", endpoint.config.name, e);
+                Ok(vec![])
+            }
+        }
+    }
+
+    /// 匹配模型名称（不区分大小写，后缀匹配）
+    /// 返回匹配到的端点实际模型名称
+    pub fn match_model_name(&self, endpoint_id: &str, client_model: &str) -> Option<String> {
+        let cache = self.model_cache.read();
+        let models = cache.get(endpoint_id)?;
+
+        // 首先检查是否完全一致（包括大小写）
+        if models.iter().any(|m| m == client_model) {
+            return Some(client_model.to_string());
+        }
+
+        // 不区分大小写的后缀匹配
+        let client_lower = client_model.to_lowercase();
+        for model in models {
+            let model_lower = model.to_lowercase();
+            // 后缀匹配：模型名称以客户端名称结尾，或客户端名称以模型名称结尾
+            if model_lower.ends_with(&client_lower) || client_lower.ends_with(&model_lower) {
+                return Some(model.clone());
+            }
+        }
+
+        None
+    }
+
+    /// 获取端点在指定池中匹配的模型名称
+    pub fn resolve_model_for_endpoint(
+        &self,
+        pool: &Pool,
+        endpoint: &EndpointState,
+        client_model: &str,
+    ) -> String {
+        // 透传模式：直接返回客户端的模型名称
+        if pool.model_mode == ModelMode::Passthrough {
+            return client_model.to_string();
+        }
+
+        // 映射模式：先检查手动配置的映射
+        if let Some(mapping) = endpoint.config.model_mappings.iter().find(|m| m.client_model == client_model) {
+            return mapping.endpoint_model.clone();
+        }
+
+        // 尝试从缓存中匹配
+        if let Some(matched) = self.match_model_name(&endpoint.config.id, client_model) {
+            return matched;
+        }
+
+        // 如果没有匹配到，返回原始名称
+        client_model.to_string()
     }
 }

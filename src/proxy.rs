@@ -4,7 +4,54 @@ use crate::scheduler::Scheduler;
 use crate::state::AppState;
 use actix_web::{web, HttpRequest, HttpResponse};
 use futures_util::StreamExt;
+use serde_json::Value;
 use tracing::{debug, error, warn};
+
+/// 根据模型映射转换请求体中的模型名称
+async fn map_model_name(
+    body: &bytes::Bytes,
+    endpoint: &EndpointState,
+    pool: &Pool,
+    state: &AppState,
+) -> bytes::Bytes {
+    // 如果是透传模式，直接返回原请求体
+    if pool.model_mode == ModelMode::Passthrough {
+        return body.clone();
+    }
+    
+    // 解析请求体
+    let Ok(mut json) = serde_json::from_slice::<Value>(body) else {
+        return body.clone();
+    };
+    
+    // 获取客户端请求的模型名称
+    let client_model = json.get("model").and_then(|m| m.as_str()).unwrap_or("").to_string();
+    if client_model.is_empty() {
+        return body.clone();
+    }
+    
+    // 检查是否有缓存，如果没有则尝试获取
+    if state.get_cached_models(&endpoint.config.id).is_none() {
+        let _ = state.fetch_endpoint_models(&endpoint.config.id).await;
+    }
+    
+    // 使用 state 的匹配函数
+    let resolved_model = state.resolve_model_for_endpoint(pool, endpoint, &client_model);
+    
+    // 如果模型名称发生变化，替换请求体
+    if resolved_model != client_model {
+        if let Some(obj) = json.as_object_mut() {
+            obj.insert("model".to_string(), Value::String(resolved_model.clone()));
+            debug!("模型映射: {} -> {}", client_model, resolved_model);
+            // 重新序列化
+            if let Ok(new_body) = serde_json::to_vec(&json) {
+                return bytes::Bytes::from(new_body);
+            }
+        }
+    }
+    
+    body.clone()
+}
 
 /// 处理API请求转发（基于对外API和池）
 pub async fn forward_request(
@@ -58,8 +105,11 @@ pub async fn forward_request(
         let actual_path = path.strip_prefix(&exposed_api.prefix).unwrap_or(path);
         // build_target_url 会自动补全 /v1，这里不再重复添加
         let target_path = actual_path.to_string();
+        
+        // 根据池的模型模式处理请求体
+        let mapped_body = map_model_name(&body, &endpoint, &pool, &state).await;
 
-        match forward_to_endpoint(state, req, &body, &endpoint, &target_path, &exposed_api.api_type).await {
+        match forward_to_endpoint(state, req, &mapped_body, &endpoint, &target_path, &exposed_api.api_type).await {
             Ok(response) => {
                 return Ok(response);
             }
@@ -107,6 +157,9 @@ pub async fn forward_stream_request(
     // build_target_url 会自动补全 /v1，这里不再重复添加
     let target_path = actual_path.to_string();
     let target_url = build_target_url(&endpoint.config.url, &target_path, &exposed_api.api_type);
+    
+    // 根据池的模型模式处理请求体
+    let mapped_body = map_model_name(&body, &endpoint, &pool, state.get_ref()).await;
 
     debug!("流式转发到: {}", target_url);
 
@@ -140,7 +193,7 @@ pub async fn forward_stream_request(
         }
     }
 
-    request_builder = request_builder.body(body.to_vec());
+    request_builder = request_builder.body(mapped_body.to_vec());
 
     let response = request_builder
         .send()
@@ -169,7 +222,7 @@ pub async fn forward_stream_request(
         .streaming({
             let mut buffer = String::new();
             stream.map(move |chunk| {
-                let chunk = chunk.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+                let chunk = chunk.map_err(std::io::Error::other);
                 if let Ok(data) = &chunk {
                     if let Ok(text) = std::str::from_utf8(data) {
                         buffer.push_str(text);

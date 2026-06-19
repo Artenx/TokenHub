@@ -58,11 +58,7 @@ pub fn check_api_auth(
         .ok_or(AppError::Unauthorized)?;
 
     // 支持 "Bearer sk-xxx" 格式
-    let provided_key = if auth_header.starts_with("Bearer ") {
-        &auth_header[7..]
-    } else {
-        auth_header
-    };
+    let provided_key = auth_header.strip_prefix("Bearer ").unwrap_or(auth_header);
 
     if provided_key == expected_key {
         Ok(())

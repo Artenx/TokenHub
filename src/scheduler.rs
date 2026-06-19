@@ -163,6 +163,7 @@ mod tests {
             enabled,
             pool_id: Some(pool_id.to_string()),
             timeout: 300,
+            model_mappings: vec![],
         }
     }
 

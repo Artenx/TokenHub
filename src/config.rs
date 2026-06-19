@@ -55,6 +55,7 @@ impl ConfigManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
     use tempfile::NamedTempFile;
 
     #[tokio::test]

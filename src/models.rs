@@ -69,6 +69,9 @@ pub struct EndpointConfig {
     /// 超时时间（秒）
     #[serde(default = "default_timeout")]
     pub timeout: u64,
+    /// 模型名称映射列表（用于映射模式）
+    #[serde(default)]
+    pub model_mappings: Vec<ModelMapping>,
 }
 
 fn default_timeout() -> u64 {
@@ -105,10 +108,8 @@ impl EndpointState {
     pub fn tokens_remaining(&self) -> u64 {
         if self.config.token_limit == 0 {
             u64::MAX // 无上限
-        } else if self.tokens_used >= self.config.token_limit {
-            0
         } else {
-            self.config.token_limit - self.tokens_used
+            self.config.token_limit.saturating_sub(self.tokens_used)
         }
     }
 
@@ -125,6 +126,31 @@ impl EndpointState {
     }
 }
 
+/// 模型参数传递模式
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelMode {
+    /// 透传模式：客户端直接使用端点支持的模型名称
+    Passthrough,
+    /// 映射模式：客户端使用统一名称，后端映射到端点实际模型
+    Mapping,
+}
+
+impl Default for ModelMode {
+    fn default() -> Self {
+        ModelMode::Passthrough
+    }
+}
+
+/// 模型名称映射
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelMapping {
+    /// 客户端请求的模型名称
+    pub client_model: String,
+    /// 端点实际的模型名称
+    pub endpoint_model: String,
+}
+
 /// 代理端点池
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Pool {
@@ -133,6 +159,9 @@ pub struct Pool {
     pub description: String,
     /// 调度算法
     pub schedule_algorithm: ScheduleAlgorithm,
+    /// 模型参数传递模式
+    #[serde(default)]
+    pub model_mode: ModelMode,
     /// 关联的对外API ID
     pub exposed_api_id: Option<String>,
     /// 创建时间
@@ -203,6 +232,9 @@ pub struct EndpointRequest {
     /// 测试时指定的模型名称（可选）
     #[serde(default)]
     pub model: Option<String>,
+    /// 模型名称映射列表（用于映射模式）
+    #[serde(default)]
+    pub model_mappings: Vec<ModelMapping>,
 }
 
 /// 池创建/更新请求
@@ -211,6 +243,8 @@ pub struct PoolRequest {
     pub name: String,
     pub description: Option<String>,
     pub schedule_algorithm: ScheduleAlgorithm,
+    #[serde(default)]
+    pub model_mode: ModelMode,
     pub exposed_api_id: Option<String>,
 }
 
@@ -261,6 +295,7 @@ pub struct EndpointStats {
     pub error_count: u32,
     pub pool_id: Option<String>,
     pub timeout: u64,
+    pub model_mappings: Vec<ModelMapping>,
 }
 
 #[derive(Debug, Serialize)]
@@ -269,6 +304,7 @@ pub struct PoolInfo {
     pub name: String,
     pub description: String,
     pub schedule_algorithm: ScheduleAlgorithm,
+    pub model_mode: ModelMode,
     pub exposed_api_id: Option<String>,
     pub endpoint_count: usize,
     pub active_endpoint_count: usize,

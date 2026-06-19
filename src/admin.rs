@@ -40,20 +40,30 @@ pub async fn create_endpoint(
     
     // 输入验证
     InputValidator::validate_name(&data.name)
-        .map_err(|e| AppError::BadRequest(e))?;
+        .map_err(AppError::BadRequest)?;
     InputValidator::validate_url(&data.url)
-        .map_err(|e| AppError::BadRequest(e))?;
+        .map_err(AppError::BadRequest)?;
     InputValidator::validate_api_key(&data.api_key)
-        .map_err(|e| AppError::BadRequest(e))?;
+        .map_err(AppError::BadRequest)?;
     InputValidator::validate_token_limit(data.token_limit)
-        .map_err(|e| AppError::BadRequest(e))?;
+        .map_err(AppError::BadRequest)?;
     InputValidator::validate_timeout(data.timeout.unwrap_or(300))
-        .map_err(|e| AppError::BadRequest(e))?;
+        .map_err(AppError::BadRequest)?;
     
     let endpoint = state
         .add_endpoint(data)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
+    
+    // 异步更新模型缓存
+    let state_clone = state.clone();
+    let endpoint_id = endpoint.config.id.clone();
+    tokio::spawn(async move {
+        if let Err(e) = state_clone.fetch_endpoint_models(&endpoint_id).await {
+            tracing::warn!("更新端点模型缓存失败: {}", e);
+        }
+    });
+    
     Ok(HttpResponse::Created().json(endpoint))
 }
 
@@ -70,6 +80,16 @@ pub async fn update_endpoint(
         .update_endpoint(&id, body.into_inner())
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
+    
+    // 异步更新模型缓存
+    let state_clone = state.clone();
+    let endpoint_id = id.clone();
+    tokio::spawn(async move {
+        if let Err(e) = state_clone.fetch_endpoint_models(&endpoint_id).await {
+            tracing::warn!("更新端点模型缓存失败: {}", e);
+        }
+    });
+    
     Ok(HttpResponse::Ok().json(endpoint))
 }
 
@@ -285,7 +305,7 @@ pub async fn check_endpoint(
     });
 
     // 根据接口类型构建测试 URL、请求体和认证头
-    let (chat_url, chat_body, mut request_builder) = match ep.api_type {
+    let (chat_url, chat_body, request_builder) = match ep.api_type {
         crate::models::ApiType::OpenAI => {
             let url = if base_url.ends_with("/v1") || base_url.ends_with("/v1/") {
                 format!("{}/chat/completions", base_url)
