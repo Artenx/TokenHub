@@ -1249,9 +1249,13 @@ function renderAvailableEndpointsList(endpoints, isMappingMode = false) {
 
 // 切换模型映射配置显示
 function toggleMappingConfig(checkbox, endpointId) {
-    const mappingConfig = checkbox.closest('div').querySelector('.endpoint-mapping-config');
-    if (mappingConfig) {
-        mappingConfig.style.display = checkbox.checked ? 'block' : 'none';
+    // 找到包含 checkbox 的最外层 div
+    const container = checkbox.closest('div[style*="padding"]');
+    if (container) {
+        const mappingConfig = container.querySelector('.endpoint-mapping-config');
+        if (mappingConfig) {
+            mappingConfig.style.display = checkbox.checked ? 'block' : 'none';
+        }
     }
 }
 
