@@ -1792,10 +1792,6 @@ function renderPoolsList() {
                     </div>
                     <div style="display: flex; gap: 6px;">
                         <button class="btn btn-small" onclick="editEndpoint('${escapeAttr(ep.id)}')" style="font-size: 0.6875rem;">编辑</button>
-                        <button class="btn btn-small ${ep.enabled ? 'btn-danger' : ''}" onclick="toggleEndpoint('${escapeAttr(ep.id)}')" style="font-size: 0.6875rem;">
-                            ${ep.enabled ? '禁用' : '启用'}
-                        </button>
-                        <button class="btn btn-small" onclick="resetEndpoint('${escapeAttr(ep.id)}')" style="font-size: 0.6875rem;">重置</button>
                         <button class="btn btn-small btn-warning" onclick="removeEndpointFromPool('${escapeAttr(ep.id)}')" style="font-size: 0.6875rem;">从池中移除</button>
                     </div>
                 </div>
