@@ -1396,10 +1396,7 @@ function renderApisList() {
         return;
     }
 
-    // 优先使用 https
-    const baseUrl = window.location.protocol === 'https:' 
-        ? window.location.origin 
-        : window.location.origin.replace('http://', 'https://');
+    const baseUrl = window.location.origin;
 
     container.innerHTML = currentApis.map(api => {
         const statusClass = api.enabled ? 'active' : 'disabled';
@@ -1838,10 +1835,7 @@ function updateApiFullUrlDisplay() {
         return;
     }
     
-    // 优先使用 https
-    const baseUrl = window.location.protocol === 'https:' 
-        ? window.location.origin 
-        : window.location.origin.replace('http://', 'https://');
+    const baseUrl = window.location.origin;
     const cleanPrefix = prefix.startsWith('/') ? prefix : '/' + prefix;
     
     let examplePath = '';

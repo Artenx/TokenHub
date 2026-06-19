@@ -56,7 +56,8 @@ pub async fn forward_request(
 
         // 计算实际路径（去掉对外API的前缀）
         let actual_path = path.strip_prefix(&exposed_api.prefix).unwrap_or(path);
-        let target_path = format!("/v1{}", actual_path);
+        // build_target_url 会自动补全 /v1，这里不再重复添加
+        let target_path = actual_path.to_string();
 
         match forward_to_endpoint(state, req, &body, &endpoint, &target_path, &exposed_api.api_type).await {
             Ok(response) => {
@@ -103,8 +104,9 @@ pub async fn forward_stream_request(
 
     // 计算实际路径
     let actual_path = path.strip_prefix(&exposed_api.prefix).unwrap_or(path);
-    let target_path = format!("/v1{}", actual_path);
-    let target_url = format!("{}/{}", endpoint.config.url.trim_end_matches('/'), target_path.trim_start_matches('/'));
+    // build_target_url 会自动补全 /v1，这里不再重复添加
+    let target_path = actual_path.to_string();
+    let target_url = build_target_url(&endpoint.config.url, &target_path, &exposed_api.api_type);
 
     debug!("流式转发到: {}", target_url);
 
@@ -114,10 +116,10 @@ pub async fn forward_stream_request(
         &target_url,
     );
 
-    // 复制请求头
+    // 复制请求头（跳过认证头，后面会使用端点的 API Key）
     for (key, value) in req.headers() {
         let key_str = key.as_str().to_lowercase();
-        if key_str != "host" && key_str != "content-length" {
+        if key_str != "host" && key_str != "content-length" && key_str != "authorization" && key_str != "x-api-key" {
             if let Ok(v) = value.to_str() {
                 request_builder = request_builder.header(key.as_str(), v);
             }
@@ -237,10 +239,10 @@ async fn forward_to_endpoint(
         &target_url,
     );
 
-    // 复制请求头
+    // 复制请求头（跳过认证头，后面会使用端点的 API Key）
     for (key, value) in req.headers() {
         let key_str = key.as_str().to_lowercase();
-        if key_str != "host" && key_str != "content-length" {
+        if key_str != "host" && key_str != "content-length" && key_str != "authorization" && key_str != "x-api-key" {
             if let Ok(v) = value.to_str() {
                 request_builder = request_builder.header(key.as_str(), v);
             }
