@@ -1965,6 +1965,7 @@ async function editPool(id) {
     document.getElementById('pool-name').value = pool.name;
     document.getElementById('pool-desc').value = pool.description || '';
     document.getElementById('pool-algorithm').value = pool.schedule_algorithm;
+    document.getElementById('pool-model-mode').value = pool.model_mode || 'passthrough';
     
     updatePoolAlgoDescription();
     showModal('pool-modal');
@@ -1977,7 +1978,8 @@ async function handleSavePool(e) {
     const data = {
         name: document.getElementById('pool-name').value,
         description: document.getElementById('pool-desc').value || null,
-        schedule_algorithm: document.getElementById('pool-algorithm').value
+        schedule_algorithm: document.getElementById('pool-algorithm').value,
+        model_mode: document.getElementById('pool-model-mode').value
     };
 
     try {

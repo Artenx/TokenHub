@@ -121,12 +121,13 @@ impl AppState {
             endpoints.insert(id.clone(), state.clone());
         }
 
-        // 更新并保存配置
-        {
+        // 更新并保存配置（先克隆数据，释放锁后再保存）
+        let config_to_save = {
             let mut app_config = self.config.write();
             app_config.endpoints.push(config);
-            self.config_manager.save(&app_config).await?;
-        }
+            app_config.clone()
+        };
+        self.config_manager.save(&config_to_save).await?;
 
         info!("已添加端点: {} ({})", state.config.name, id);
         Ok(state)
@@ -167,13 +168,16 @@ impl AppState {
         }
         let state = ep.clone();
 
-        // 更新配置
+        // 更新配置（先克隆数据，释放锁后再保存）
         drop(endpoints);
-        let mut app_config = self.config.write();
-        if let Some(ep_config) = app_config.endpoints.iter_mut().find(|e| e.id == id) {
-            *ep_config = state.config.clone();
-        }
-        self.config_manager.save(&app_config).await?;
+        let config_to_save = {
+            let mut app_config = self.config.write();
+            if let Some(ep_config) = app_config.endpoints.iter_mut().find(|e| e.id == id) {
+                *ep_config = state.config.clone();
+            }
+            app_config.clone()
+        };
+        self.config_manager.save(&config_to_save).await?;
 
         info!("已更新端点: {} ({})", state.config.name, id);
         Ok(state)
@@ -186,9 +190,12 @@ impl AppState {
             endpoints.remove(id).ok_or_else(|| anyhow::anyhow!("端点不存在: {}", id))?;
         }
 
-        let mut app_config = self.config.write();
-        app_config.endpoints.retain(|e| e.id != id);
-        self.config_manager.save(&app_config).await?;
+        let config_to_save = {
+            let mut app_config = self.config.write();
+            app_config.endpoints.retain(|e| e.id != id);
+            app_config.clone()
+        };
+        self.config_manager.save(&config_to_save).await?;
 
         info!("已删除端点: {}", id);
         Ok(())
@@ -201,12 +208,16 @@ impl AppState {
         ep.config.enabled = !ep.config.enabled;
         let state = ep.clone();
 
+        // 更新配置（先克隆数据，释放锁后再保存）
         drop(endpoints);
-        let mut app_config = self.config.write();
-        if let Some(ep_config) = app_config.endpoints.iter_mut().find(|e| e.id == id) {
-            ep_config.enabled = state.config.enabled;
-        }
-        self.config_manager.save(&app_config).await?;
+        let config_to_save = {
+            let mut app_config = self.config.write();
+            if let Some(ep_config) = app_config.endpoints.iter_mut().find(|e| e.id == id) {
+                ep_config.enabled = state.config.enabled;
+            }
+            app_config.clone()
+        };
+        self.config_manager.save(&config_to_save).await?;
 
         info!("端点 {} 已{}", state.config.name, if state.config.enabled { "启用" } else { "禁用" });
         Ok(state)
@@ -245,11 +256,12 @@ impl AppState {
             created_at: Utc::now(),
         };
 
-        {
+        let config_to_save = {
             let mut config = self.config.write();
             config.pools.push(pool.clone());
-            self.config_manager.save(&config).await?;
-        }
+            config.clone()
+        };
+        self.config_manager.save(&config_to_save).await?;
 
         info!("已添加池: {} ({})", pool.name, id);
         Ok(pool)
@@ -257,37 +269,43 @@ impl AppState {
 
     /// 更新池
     pub async fn update_pool(&self, id: &str, req: PoolRequest) -> anyhow::Result<Pool> {
-        let mut config = self.config.write();
-        let pool = config.pools.iter_mut().find(|p| p.id == id)
-            .ok_or_else(|| anyhow::anyhow!("池不存在: {}", id))?;
+        let config_to_save = {
+            let mut config = self.config.write();
+            let pool = config.pools.iter_mut().find(|p| p.id == id)
+                .ok_or_else(|| anyhow::anyhow!("池不存在: {}", id))?;
 
-        pool.name = req.name;
-        if let Some(desc) = req.description {
-            pool.description = desc;
-        }
-        pool.schedule_algorithm = req.schedule_algorithm;
-        pool.model_mode = req.model_mode;
-        pool.exposed_api_id = req.exposed_api_id;
-        let pool_clone = pool.clone();
-
-        self.config_manager.save(&config).await?;
-        info!("已更新池: {} ({})", pool_clone.name, id);
-        Ok(pool_clone)
+            pool.name = req.name;
+            if let Some(desc) = req.description {
+                pool.description = desc;
+            }
+            pool.schedule_algorithm = req.schedule_algorithm;
+            pool.model_mode = req.model_mode;
+            pool.exposed_api_id = req.exposed_api_id;
+            config.clone()
+        };
+        
+        let pool = config_to_save.pools.iter().find(|p| p.id == id).unwrap().clone();
+        self.config_manager.save(&config_to_save).await?;
+        info!("已更新池: {} ({})", pool.name, id);
+        Ok(pool)
     }
 
     /// 删除池
     pub async fn delete_pool(&self, id: &str) -> anyhow::Result<()> {
-        let mut config = self.config.write();
-        config.pools.retain(|p| p.id != id);
-        // 清除关联的端点
-        for ep in config.endpoints.iter_mut() {
-            if ep.pool_id.as_deref() == Some(id) {
-                ep.pool_id = None;
+        let config_to_save = {
+            let mut config = self.config.write();
+            config.pools.retain(|p| p.id != id);
+            // 清除关联的端点
+            for ep in config.endpoints.iter_mut() {
+                if ep.pool_id.as_deref() == Some(id) {
+                    ep.pool_id = None;
+                }
             }
-        }
-        // 清除关联的对外API
-        config.exposed_apis.retain(|a| a.pool_id != id);
-        self.config_manager.save(&config).await?;
+            // 清除关联的对外API
+            config.exposed_apis.retain(|a| a.pool_id != id);
+            config.clone()
+        };
+        self.config_manager.save(&config_to_save).await?;
 
         info!("已删除池: {}", id);
         Ok(())
@@ -321,11 +339,12 @@ impl AppState {
             created_at: Utc::now(),
         };
 
-        {
+        let config_to_save = {
             let mut config = self.config.write();
             config.exposed_apis.push(api.clone());
-            self.config_manager.save(&config).await?;
-        }
+            config.clone()
+        };
+        self.config_manager.save(&config_to_save).await?;
 
         info!("已添加对外API: {} ({})", api.name, id);
         Ok(api)
@@ -333,30 +352,36 @@ impl AppState {
 
     /// 更新对外API
     pub async fn update_exposed_api(&self, id: &str, req: ExposedApiRequest) -> anyhow::Result<ExposedApi> {
-        let mut config = self.config.write();
-        let api = config.exposed_apis.iter_mut().find(|a| a.id == id)
-            .ok_or_else(|| anyhow::anyhow!("对外API不存在: {}", id))?;
+        let config_to_save = {
+            let mut config = self.config.write();
+            let api = config.exposed_apis.iter_mut().find(|a| a.id == id)
+                .ok_or_else(|| anyhow::anyhow!("对外API不存在: {}", id))?;
 
-        api.name = req.name;
-        api.prefix = req.prefix;
-        api.api_type = req.api_type;
-        api.api_key = req.api_key;
-        if let Some(enabled) = req.enabled {
-            api.enabled = enabled;
-        }
-        api.pool_id = req.pool_id;
-        let api_clone = api.clone();
-
-        self.config_manager.save(&config).await?;
-        info!("已更新对外API: {} ({})", api_clone.name, id);
-        Ok(api_clone)
+            api.name = req.name;
+            api.prefix = req.prefix;
+            api.api_type = req.api_type;
+            api.api_key = req.api_key;
+            if let Some(enabled) = req.enabled {
+                api.enabled = enabled;
+            }
+            api.pool_id = req.pool_id;
+            config.clone()
+        };
+        
+        let api = config_to_save.exposed_apis.iter().find(|a| a.id == id).unwrap().clone();
+        self.config_manager.save(&config_to_save).await?;
+        info!("已更新对外API: {} ({})", api.name, id);
+        Ok(api)
     }
 
     /// 删除对外API
     pub async fn delete_exposed_api(&self, id: &str) -> anyhow::Result<()> {
-        let mut config = self.config.write();
-        config.exposed_apis.retain(|a| a.id != id);
-        self.config_manager.save(&config).await?;
+        let config_to_save = {
+            let mut config = self.config.write();
+            config.exposed_apis.retain(|a| a.id != id);
+            config.clone()
+        };
+        self.config_manager.save(&config_to_save).await?;
 
         info!("已删除对外API: {}", id);
         Ok(())
@@ -364,16 +389,19 @@ impl AppState {
 
     /// 切换对外API启用状态
     pub async fn toggle_exposed_api(&self, id: &str) -> anyhow::Result<ExposedApi> {
-        let mut config = self.config.write();
-        let api = config.exposed_apis.iter_mut().find(|a| a.id == id)
-            .ok_or_else(|| anyhow::anyhow!("对外API不存在: {}", id))?;
+        let config_to_save = {
+            let mut config = self.config.write();
+            let api = config.exposed_apis.iter_mut().find(|a| a.id == id)
+                .ok_or_else(|| anyhow::anyhow!("对外API不存在: {}", id))?;
 
-        api.enabled = !api.enabled;
-        let api_clone = api.clone();
+            api.enabled = !api.enabled;
+            config.clone()
+        };
 
-        self.config_manager.save(&config).await?;
-        info!("对外API {} 已{}", api_clone.name, if api_clone.enabled { "启用" } else { "禁用" });
-        Ok(api_clone)
+        let api = config_to_save.exposed_apis.iter().find(|a| a.id == id).unwrap().clone();
+        self.config_manager.save(&config_to_save).await?;
+        info!("对外API {} 已{}", api.name, if api.enabled { "启用" } else { "禁用" });
+        Ok(api)
     }
 
     /// 获取对外API
@@ -497,9 +525,12 @@ impl AppState {
 
     /// 更新管理密码
     pub async fn change_admin_password(&self, new_password: &str) -> anyhow::Result<()> {
-        let mut config = self.config.write();
-        config.admin_password = new_password.to_string();
-        self.config_manager.save(&config).await?;
+        let config_to_save = {
+            let mut config = self.config.write();
+            config.admin_password = new_password.to_string();
+            config.clone()
+        };
+        self.config_manager.save(&config_to_save).await?;
         Ok(())
     }
 
