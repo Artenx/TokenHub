@@ -1293,8 +1293,9 @@ async function loadEndpointModelsForSelect(endpointId, container) {
         
         const result = await res.json();
         if (result.success && result.models && result.models.length > 0) {
-            // 存储模型列表到容器
-            modelsContainer.dataset.models = JSON.stringify(result.models);
+            // 存储模型列表到容器（只提取 id 字段）
+            const modelIds = result.models.map(m => typeof m === 'object' ? m.id : m);
+            modelsContainer.dataset.models = JSON.stringify(modelIds);
         } else {
             modelsContainer.dataset.models = '[]';
         }
