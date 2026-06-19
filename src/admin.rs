@@ -2,6 +2,7 @@ use crate::auth::check_admin_auth;
 use crate::error::AppError;
 use crate::models::*;
 use crate::state::AppState;
+use crate::validator::InputValidator;
 use actix_web::{web, HttpRequest, HttpResponse};
 
 /// 获取所有端点
@@ -35,8 +36,22 @@ pub async fn create_endpoint(
     body: web::Json<EndpointRequest>,
 ) -> Result<HttpResponse, AppError> {
     check_admin_auth(&req)?;
+    let data = body.into_inner();
+    
+    // 输入验证
+    InputValidator::validate_name(&data.name)
+        .map_err(|e| AppError::BadRequest(e))?;
+    InputValidator::validate_url(&data.url)
+        .map_err(|e| AppError::BadRequest(e))?;
+    InputValidator::validate_api_key(&data.api_key)
+        .map_err(|e| AppError::BadRequest(e))?;
+    InputValidator::validate_token_limit(data.token_limit)
+        .map_err(|e| AppError::BadRequest(e))?;
+    InputValidator::validate_timeout(data.timeout.unwrap_or(300))
+        .map_err(|e| AppError::BadRequest(e))?;
+    
     let endpoint = state
-        .add_endpoint(body.into_inner())
+        .add_endpoint(data)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     Ok(HttpResponse::Created().json(endpoint))

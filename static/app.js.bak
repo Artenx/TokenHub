@@ -373,12 +373,12 @@ function renderEndpointsList() {
                     <div class="progress-fill ${progressClass}" style="width: ${Math.min(percentage, 100)}%"></div>
                 </div>
                 <div class="endpoint-actions">
-                    <button class="btn btn-small btn-outline" onclick="editEndpoint('${escapeAttr(ep.id)}')">编辑</button>
-                    <button class="btn btn-small ${ep.enabled ? 'btn-warning' : 'btn-success'}" onclick="toggleEndpoint('${escapeAttr(ep.id)}')">
+                    <button class="btn btn-small btn-outline" onclick="editEndpoint('${ep.id}')">编辑</button>
+                    <button class="btn btn-small ${ep.enabled ? 'btn-warning' : 'btn-success'}" onclick="toggleEndpoint('${ep.id}')">
                         ${ep.enabled ? '禁用' : '启用'}
                     </button>
-                    <button class="btn btn-small btn-outline" onclick="resetEndpoint('${escapeAttr(ep.id)}')">重置Token</button>
-                    <button class="btn btn-small btn-danger" onclick="deleteEndpoint('${escapeAttr(ep.id)}')">删除</button>
+                    <button class="btn btn-small btn-outline" onclick="resetEndpoint('${ep.id}')">重置Token</button>
+                    <button class="btn btn-small btn-danger" onclick="deleteEndpoint('${ep.id}')">删除</button>
                 </div>
             </div>
         `;
@@ -670,11 +670,11 @@ function renderApisList() {
                     </div>
                 </div>
                 <div class="endpoint-actions">
-                    <button class="btn btn-small" onclick="editApi('${escapeAttr(api.id)}')">编辑</button>
-                    <button class="btn btn-small ${api.enabled ? 'btn-danger' : ''}" onclick="toggleApi('${escapeAttr(api.id)}')">
+                    <button class="btn btn-small" onclick="editApi('${api.id}')">编辑</button>
+                    <button class="btn btn-small ${api.enabled ? 'btn-danger' : ''}" onclick="toggleApi('${api.id}')">
                         ${api.enabled ? '禁用' : '启用'}
                     </button>
-                    <button class="btn btn-small btn-danger" onclick="deleteApi('${escapeAttr(api.id)}')">删除</button>
+                    <button class="btn btn-small btn-danger" onclick="deleteApi('${api.id}')">删除</button>
                 </div>
             </div>
         `;
@@ -723,12 +723,12 @@ function renderPoolsList() {
                         <div class="progress-fill ${progressClass}" style="width: ${Math.min(percentage, 100)}%"></div>
                     </div>
                     <div style="display: flex; gap: 6px;">
-                        <button class="btn btn-small" onclick="editEndpoint('${escapeAttr(ep.id)}')" style="font-size: 0.6875rem;">编辑</button>
-                        <button class="btn btn-small ${ep.enabled ? 'btn-danger' : ''}" onclick="toggleEndpoint('${escapeAttr(ep.id)}')" style="font-size: 0.6875rem;">
+                        <button class="btn btn-small" onclick="editEndpoint('${ep.id}')" style="font-size: 0.6875rem;">编辑</button>
+                        <button class="btn btn-small ${ep.enabled ? 'btn-danger' : ''}" onclick="toggleEndpoint('${ep.id}')" style="font-size: 0.6875rem;">
                             ${ep.enabled ? '禁用' : '启用'}
                         </button>
-                        <button class="btn btn-small" onclick="resetEndpoint('${escapeAttr(ep.id)}')" style="font-size: 0.6875rem;">重置</button>
-                        <button class="btn btn-small btn-danger" onclick="deleteEndpoint('${escapeAttr(ep.id)}')" style="font-size: 0.6875rem;">删除</button>
+                        <button class="btn btn-small" onclick="resetEndpoint('${ep.id}')" style="font-size: 0.6875rem;">重置</button>
+                        <button class="btn btn-small btn-danger" onclick="deleteEndpoint('${ep.id}')" style="font-size: 0.6875rem;">删除</button>
                     </div>
                 </div>
             `;
@@ -767,14 +767,14 @@ function renderPoolsList() {
                 <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border);">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                         <span style="font-size: 0.8125rem; font-weight: 500; color: var(--text-secondary);">池内端点</span>
-                        <button class="btn btn-small btn-primary" onclick="addEndpointToPool('${escapeAttr(pool.id)}')" style="font-size: 0.6875rem;">+ 添加端点</button>
+                        <button class="btn btn-small btn-primary" onclick="addEndpointToPool('${pool.id}')" style="font-size: 0.6875rem;">+ 添加端点</button>
                     </div>
                     ${endpointsHtml}
                 </div>
                 
                 <div class="endpoint-actions" style="margin-top: 12px;">
-                    <button class="btn btn-small" onclick="editPool('${escapeAttr(pool.id)}')">编辑池</button>
-                    <button class="btn btn-small btn-danger" onclick="deletePool('${escapeAttr(pool.id)}')">删除池</button>
+                    <button class="btn btn-small" onclick="editPool('${pool.id}')">编辑池</button>
+                    <button class="btn btn-small btn-danger" onclick="deletePool('${pool.id}')">删除池</button>
                 </div>
             </div>
         `;

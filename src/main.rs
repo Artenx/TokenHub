@@ -6,6 +6,7 @@ mod models;
 mod proxy;
 mod scheduler;
 mod state;
+mod validator;
 
 use actix_cors::Cors;
 use actix_files as fs;
