@@ -1187,14 +1187,18 @@ function showSelectEndpointModal(poolId, poolName) {
     document.getElementById('select-pool-id').value = poolId;
     document.getElementById('select-endpoint-title').textContent = `选择端点到 ${poolName}`;
     
+    // 检查池的模型模式
+    const pool = currentPools.find(p => p.id === poolId);
+    const isMappingMode = pool && pool.model_mode === 'mapping';
+    
     // 获取不在任何池中的端点（每个端点只能归属一个池）
     const availableEndpoints = currentEndpoints.filter(ep => !ep.pool_id || ep.pool_id === '');
-    renderAvailableEndpointsList(availableEndpoints);
+    renderAvailableEndpointsList(availableEndpoints, isMappingMode);
     showModal('select-endpoint-modal');
 }
 
 // 渲染可选端点列表
-function renderAvailableEndpointsList(endpoints) {
+function renderAvailableEndpointsList(endpoints, isMappingMode = false) {
     const container = document.getElementById('available-endpoints-list');
     if (!container) return;
     
@@ -1207,22 +1211,75 @@ function renderAvailableEndpointsList(endpoints) {
         const statusClass = !ep.enabled ? 'disabled' : ep.tokens_remaining === 0 ? 'exhausted' : 'active';
         const statusText = !ep.enabled ? '已禁用' : ep.tokens_remaining === 0 ? '已耗尽' : '正常';
         
+        // 映射模式下显示模型映射配置
+        const mappingHtml = isMappingMode ? `
+            <div class="endpoint-mapping-config" style="margin-top: 8px; padding: 8px; background: var(--bg-secondary); border-radius: var(--radius-sm); display: none;">
+                <div style="font-size: 0.75rem; color: var(--text-tertiary); margin-bottom: 8px;">配置模型映射（客户端模型名 → 端点模型名）</div>
+                <div class="mapping-rows" data-endpoint-id="${ep.id}"></div>
+                <button type="button" class="btn btn-small" onclick="addMappingRowInSelect('${ep.id}')" style="margin-top: 4px;">+ 添加映射</button>
+            </div>
+        ` : '';
+        
         return `
-            <div style="display: flex; align-items: center; padding: 12px; background: var(--bg-tertiary); border-radius: var(--radius-sm); margin-bottom: 8px;">
-                <input type="checkbox" class="endpoint-checkbox" data-id="${ep.id}" style="margin-right: 12px;">
-                <div style="flex: 1;">
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                        <span style="font-weight: 500;">${escapeHtml(ep.name)}</span>
-                        <span class="status-badge ${statusClass}" style="font-size: 0.625rem;">${statusText}</span>
-                    </div>
-                    <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px;">
-                        <span>${ep.api_type.toUpperCase()}</span>
-                        <span style="margin-left: 8px;">${truncate(ep.url, 30)}</span>
+            <div style="padding: 12px; background: var(--bg-tertiary); border-radius: var(--radius-sm); margin-bottom: 8px;">
+                <div style="display: flex; align-items: center;">
+                    <input type="checkbox" class="endpoint-checkbox" data-id="${ep.id}" style="margin-right: 12px;" onchange="toggleMappingConfig(this, '${ep.id}')">
+                    <div style="flex: 1;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span style="font-weight: 500;">${escapeHtml(ep.name)}</span>
+                            <span class="status-badge ${statusClass}" style="font-size: 0.625rem;">${statusText}</span>
+                        </div>
+                        <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px;">
+                            <span>${ep.api_type.toUpperCase()}</span>
+                            <span style="margin-left: 8px;">${truncate(ep.url, 30)}</span>
+                        </div>
                     </div>
                 </div>
+                ${mappingHtml}
             </div>
         `;
     }).join('');
+}
+
+// 切换模型映射配置显示
+function toggleMappingConfig(checkbox, endpointId) {
+    const mappingConfig = checkbox.closest('div').querySelector('.endpoint-mapping-config');
+    if (mappingConfig) {
+        mappingConfig.style.display = checkbox.checked ? 'block' : 'none';
+    }
+}
+
+// 在选择端点对话框中添加映射行
+function addMappingRowInSelect(endpointId) {
+    const container = document.querySelector(`.mapping-rows[data-endpoint-id="${endpointId}"]`);
+    if (!container) return;
+    
+    const row = document.createElement('div');
+    row.style.cssText = 'display: flex; gap: 8px; margin-bottom: 4px; align-items: center;';
+    row.innerHTML = `
+        <input type="text" class="select-mapping-client" placeholder="客户端模型名" style="flex: 1; font-size: 0.75rem;">
+        <span style="color: var(--text-tertiary);">→</span>
+        <input type="text" class="select-mapping-endpoint" placeholder="端点模型名" style="flex: 1; font-size: 0.75rem;">
+        <button type="button" class="btn btn-small btn-danger" onclick="this.parentElement.remove()" style="font-size: 0.625rem;">删除</button>
+    `;
+    container.appendChild(row);
+}
+
+// 获取选择端点对话框中的模型映射
+function getMappingsForEndpoint(endpointId) {
+    const container = document.querySelector(`.mapping-rows[data-endpoint-id="${endpointId}"]`);
+    if (!container) return [];
+    
+    const mappings = [];
+    const rows = container.querySelectorAll('div');
+    rows.forEach(row => {
+        const clientModel = row.querySelector('.select-mapping-client')?.value?.trim();
+        const endpointModel = row.querySelector('.select-mapping-endpoint')?.value?.trim();
+        if (clientModel && endpointModel) {
+            mappings.push({ client_model: clientModel, endpoint_model: endpointModel });
+        }
+    });
+    return mappings;
 }
 
 // 搜索端点
@@ -1235,7 +1292,12 @@ function searchEndpointsForPool(query) {
         ep.url.toLowerCase().includes(query.toLowerCase())
     );
     
-    renderAvailableEndpointsList(filtered);
+    // 检查池的模型模式
+    const poolId = document.getElementById('select-pool-id').value;
+    const pool = currentPools.find(p => p.id === poolId);
+    const isMappingMode = pool && pool.model_mode === 'mapping';
+    
+    renderAvailableEndpointsList(filtered, isMappingMode);
 }
 
 // 确认添加端点到池
@@ -1250,6 +1312,21 @@ async function confirmAddEndpointsToPool() {
     
     const endpointIds = Array.from(checkboxes).map(cb => cb.dataset.id);
     
+    // 检查池的模型模式
+    const pool = currentPools.find(p => p.id === poolId);
+    const isMappingMode = pool && pool.model_mode === 'mapping';
+    
+    // 如果是映射模式，验证是否配置了映射
+    if (isMappingMode) {
+        for (const endpointId of endpointIds) {
+            const mappings = getMappingsForEndpoint(endpointId);
+            if (mappings.length === 0) {
+                showToast('映射模式下需要为每个端点配置至少一个模型映射', 'error');
+                return;
+            }
+        }
+    }
+    
     try {
         // 批量更新端点的池 ID
         for (const endpointId of endpointIds) {
@@ -1259,6 +1336,9 @@ async function confirmAddEndpointsToPool() {
                 throw new Error('获取端点信息失败');
             }
             const fullEndpoint = await getRes.json();
+            
+            // 获取该端点的模型映射配置
+            const modelMappings = getMappingsForEndpoint(endpointId);
             
             // 更新 pool_id
             const res = await fetch(`${API_BASE}/endpoints/${endpointId}`, {
@@ -1273,7 +1353,8 @@ async function confirmAddEndpointsToPool() {
                     timeout: fullEndpoint.config.timeout || 300,
                     reset_policy: fullEndpoint.config.reset_policy || 'manual',
                     enabled: fullEndpoint.config.enabled,
-                    pool_id: poolId
+                    pool_id: poolId,
+                    model_mappings: modelMappings
                 })
             });
             
