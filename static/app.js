@@ -95,6 +95,28 @@ function initEventListeners() {
         epType.addEventListener('change', updateEndpointFullUrl);
     }
 
+    // 监听限额变化，控制重置方式
+    const epLimit = document.getElementById('ep-limit');
+    const epReset = document.getElementById('ep-reset');
+    const epResetHint = document.getElementById('ep-reset-hint');
+    if (epLimit && epReset) {
+        const updateResetPolicy = () => {
+            if (!epLimit.value || epLimit.value === '0') {
+                // 限额为空时，固定为每日重置并禁用
+                epReset.value = 'daily';
+                epReset.disabled = true;
+                if (epResetHint) epResetHint.style.display = 'block';
+            } else {
+                // 限额不为空时，启用选择
+                epReset.disabled = false;
+                if (epResetHint) epResetHint.style.display = 'none';
+            }
+        };
+        epLimit.addEventListener('input', updateResetPolicy);
+        // 初始化时也检查一次
+        updateResetPolicy();
+    }
+
     // 浏览模型按钮（表单内）
     const btnBrowseModelsForm = document.getElementById('btn-browse-models-form');
     if (btnBrowseModelsForm) {
@@ -460,10 +482,11 @@ function renderEndpointsList() {
     }
 
     container.innerHTML = currentEndpoints.map(ep => {
-        const percentage = ep.token_limit > 0 ? (ep.tokens_used / ep.token_limit * 100) : 0;
+        const isUnlimited = ep.token_limit >= 999999999000;
+        const percentage = (!isUnlimited && ep.token_limit > 0) ? (ep.tokens_used / ep.token_limit * 100) : 0;
         const progressClass = percentage >= 100 ? 'full' : percentage >= 80 ? 'high' : '';
-        const statusClass = !ep.enabled ? 'disabled' : ep.tokens_remaining === 0 ? 'exhausted' : 'active';
-        const statusText = !ep.enabled ? '已禁用' : ep.tokens_remaining === 0 ? '已耗尽' : '正常';
+        const statusClass = !ep.enabled ? 'disabled' : (!isUnlimited && ep.tokens_remaining === 0) ? 'exhausted' : 'active';
+        const statusText = !ep.enabled ? '已禁用' : (!isUnlimited && ep.tokens_remaining === 0) ? '已耗尽' : '正常';
 
         return `
             <div class="endpoint-card">
@@ -483,17 +506,17 @@ function renderEndpointsList() {
                         <span>${ep.api_type.toUpperCase()}</span>
                     </div>
                     <div class="endpoint-detail">
-                        <label>已用/限额</label>
-                        <span>${formatNumber(ep.tokens_used)} / ${formatLimit(ep.token_limit)}</span>
+                        <label>今日已用</label>
+                        <span>${formatNumber(ep.tokens_used)}</span>
                     </div>
                     <div class="endpoint-detail">
-                        <label>剩余</label>
-                        <span>${formatLimit(ep.tokens_remaining)}</span>
+                        <label>限额</label>
+                        <span>${formatLimit(ep.token_limit)}</span>
                     </div>
                 </div>
-                <div class="progress-bar">
+                ${isUnlimited ? '' : `<div class="progress-bar">
                     <div class="progress-fill ${progressClass}" style="width: ${Math.min(percentage, 100)}%"></div>
-                </div>
+                </div>`}
                 <div class="endpoint-actions">
                     <button class="btn btn-small btn-outline" onclick="editEndpoint('${escapeAttr(ep.id)}')">编辑</button>
                     <button class="btn btn-small ${ep.enabled ? 'btn-warning' : 'btn-success'}" onclick="toggleEndpoint('${escapeAttr(ep.id)}')">
@@ -549,13 +572,20 @@ async function editEndpoint(id) {
     document.getElementById('ep-name').value = ep.name;
     document.getElementById('ep-url').value = ep.url;
     document.getElementById('ep-type').value = ep.api_type;
-    document.getElementById('ep-limit').value = ep.token_limit || '';
+    document.getElementById('ep-limit').value = ep.token_limit === 999999999999 ? '' : (ep.token_limit || '');
     document.getElementById('ep-timeout').value = ep.timeout || 300;
-    document.getElementById('ep-reset').value = ep.reset_policy || 'manual';
     document.getElementById('ep-enabled').checked = ep.enabled;
 
     // 更新完整路径显示
     updateEndpointFullUrl();
+    
+    // 触发限额变化事件，控制重置方式
+    const epLimitInput = document.getElementById('ep-limit');
+    if (epLimitInput) {
+        epLimitInput.dispatchEvent(new Event('input'));
+    }
+    // 设置重置方式（在触发 input 事件后，因为 input 事件可能会改变它）
+    document.getElementById('ep-reset').value = ep.reset_policy || 'manual';
 
     // 获取完整端点信息以显示 API Key
     try {
@@ -920,7 +950,13 @@ async function resetEndpoint(id) {
         const res = await fetch(`${API_BASE}/endpoints/${id}/reset`, { method: 'POST' });
         if (res.ok) {
             showToast('Token已重置', 'success');
-            loadDashboard();
+            // 刷新当前页面数据
+            const activeTab = document.querySelector('.nav-btn.active');
+            if (activeTab) {
+                switchTab(activeTab.dataset.tab);
+            } else {
+                loadDashboard();
+            }
         }
     } catch (e) {
         showToast('操作失败', 'error');
