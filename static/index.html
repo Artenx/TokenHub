@@ -56,8 +56,9 @@
 
             <nav>
                 <button class="nav-btn active" data-tab="dashboard">概览</button>
-                <button class="nav-btn" data-tab="endpoints">端点</button>
-                <button class="nav-btn" data-tab="apis">API接口</button>
+                <button class="nav-btn" data-tab="endpoint-mgmt">端点管理</button>
+                <button class="nav-btn" data-tab="pools">池管理</button>
+                <button class="nav-btn" data-tab="api-mgmt">接口管理</button>
                 <button class="nav-btn" data-tab="settings">设置</button>
             </nav>
 
@@ -120,24 +121,38 @@
             </div>
 
             <!-- 端点管理 -->
-            <div id="tab-endpoints" class="tab-content">
+            <div id="tab-endpoint-mgmt" class="tab-content">
+                <div class="section">
+                    <div class="section-header">
+                        <h2>端点列表</h2>
+                        <button id="btn-add-endpoint" class="btn btn-primary btn-small">+ 添加端点</button>
+                    </div>
+                    <p style="font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 16px;">
+                        管理所有代理端点，添加 API Key 和配置。端点可在「池管理」中分组使用。
+                    </p>
+                    <div id="endpoints-list"></div>
+                </div>
+            </div>
+
+            <!-- 池管理 -->
+            <div id="tab-pools" class="tab-content">
                 <div class="section">
                     <div class="section-header">
                         <h2>端点池</h2>
                         <button id="btn-add-pool" class="btn btn-primary btn-small">+ 添加池</button>
                     </div>
                     <p style="font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 16px;">
-                        先创建端点池，再在池中添加代理端点。每个池可配置独立的调度算法。
+                        端点池用于将多个端点分组，每个池可配置独立的调度算法。点击池可添加端点到池中。
                     </p>
                     <div id="pools-list"></div>
                 </div>
             </div>
 
-            <!-- API接口管理 -->
-            <div id="tab-apis" class="tab-content">
+            <!-- 接口管理 -->
+            <div id="tab-api-mgmt" class="tab-content">
                 <div class="section">
                     <div class="section-header">
-                        <h2>API 接口</h2>
+                        <h2>对外接口</h2>
                         <button id="btn-add-api" class="btn btn-primary btn-small">+ 添加接口</button>
                     </div>
                     <p style="font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 16px;">
@@ -152,12 +167,49 @@
                 <div class="section">
                     <h2>系统设置</h2>
                     <p style="font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 16px;">
-                        接口类型、调度算法、API认证密钥等配置请在「端点」和「API接口」菜单中分别设置。
+                        接口类型、调度算法、API认证密钥等配置请在「端点管理」和「接口管理」菜单中分别设置。
                     </p>
                     <div style="display: flex; gap: 12px;">
                         <button id="btn-change-password-settings" class="btn">修改密码</button>
                         <button id="btn-reset-all" class="btn btn-danger">重置所有端点 Token</button>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 模型浏览模态框 -->
+        <div id="models-modal" class="modal" style="display:none; z-index: 1100;">
+            <div class="modal-content" style="max-width: 700px;">
+                <div class="modal-header">
+                    <h2 id="models-modal-title">可用模型列表</h2>
+                    <button class="modal-close">&times;</button>
+                </div>
+                <div style="margin-bottom: 16px;">
+                    <input type="text" id="model-search" placeholder="搜索模型名称..." style="width: 100%;">
+                </div>
+                <div id="models-list" style="max-height: 400px; overflow-y: auto;"></div>
+                <div id="models-modal-footer" style="display: none; margin-top: 16px; text-align: right;">
+                    <button type="button" class="btn modal-close" onclick="hideModal('models-modal')">取消</button>
+                    <button type="button" class="btn btn-primary" id="btn-confirm-model">确认测试</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 选择端点到池模态框 -->
+        <div id="select-endpoint-modal" class="modal" style="display:none">
+            <div class="modal-content" style="max-width: 600px;">
+                <div class="modal-header">
+                    <h2 id="select-endpoint-title">选择端点到池</h2>
+                    <button class="modal-close">&times;</button>
+                </div>
+                <input type="hidden" id="select-pool-id">
+                <div style="margin-bottom: 16px;">
+                    <input type="text" id="endpoint-search" placeholder="搜索端点名称或URL..." style="width: 100%;">
+                </div>
+                <div id="available-endpoints-list" style="max-height: 400px; overflow-y: auto;"></div>
+                <div class="form-actions" style="margin-top: 16px;">
+                    <button type="button" class="btn modal-close">取消</button>
+                    <button type="button" class="btn btn-primary" id="btn-confirm-add-endpoints">确认添加</button>
                 </div>
             </div>
         </div>
@@ -177,8 +229,9 @@
                         <input type="text" id="ep-name" placeholder="My GPT-4" required>
                     </div>
                     <div class="form-group">
-                        <label>端点 URL</label>
+                        <label>Base URL</label>
                         <input type="text" id="ep-url" placeholder="https://api.openai.com" required>
+                        <small>只需输入域名，系统会自动补全完整 API 路径</small>
                     </div>
                     <div class="form-group">
                         <label>接口类型</label>
@@ -187,6 +240,8 @@
                             <option value="anthropic">Anthropic</option>
                             <option value="openai-responses">OpenAI Responses</option>
                         </select>
+                        <small>选择类型后自动配置 API 路径和认证方式</small>
+                        <div id="ep-full-url" style="margin-top: 8px; padding: 8px 12px; background: var(--bg-secondary); border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 0.8125rem; color: var(--accent); word-break: break-all;"></div>
                     </div>
                     <div class="form-group">
                         <label>API Key</label>
@@ -216,10 +271,12 @@
                         </label>
                     </div>
                     <div class="form-actions">
-                        <button type="button" class="btn" id="btn-check-endpoint">验证连接</button>
+                        <button type="button" class="btn btn-outline" id="btn-browse-models-form">浏览模型</button>
+                        <button type="button" class="btn btn-outline" id="btn-check-endpoint">对话测试</button>
                         <button type="button" class="btn modal-close">取消</button>
                         <button type="submit" class="btn btn-primary">保存</button>
                     </div>
+                    <div id="check-result" style="margin-top: 12px; padding: 8px; border-radius: 4px; display: none;"></div>
                 </form>
             </div>
         </div>
@@ -269,6 +326,7 @@
                         <label>URL 前缀</label>
                         <input type="text" id="api-prefix" placeholder="/v1/gpt4" required>
                         <small>客户端请求时使用的路径前缀，如 /v1、/api/gpt4</small>
+                        <div id="api-full-url" style="margin-top: 8px; padding: 8px 12px; background: var(--bg-secondary); border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 0.8125rem; color: var(--accent); word-break: break-all;"></div>
                     </div>
                     <div class="form-group">
                         <label>接口类型</label>
@@ -296,9 +354,11 @@
                         </label>
                     </div>
                     <div class="form-actions">
+                        <button type="button" class="btn btn-outline" id="btn-test-api">对话测试</button>
                         <button type="button" class="btn modal-close">取消</button>
                         <button type="submit" class="btn btn-primary">保存</button>
                     </div>
+                    <div id="api-test-result" style="margin-top: 12px; padding: 8px; border-radius: 4px; display: none;"></div>
                 </form>
             </div>
         </div>

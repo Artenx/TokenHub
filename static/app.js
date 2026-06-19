@@ -29,6 +29,45 @@ async function checkAuth() {
     }
 }
 
+// 更新端点完整路径显示
+function updateEndpointFullUrl() {
+    const epUrl = document.getElementById('ep-url');
+    const epType = document.getElementById('ep-type');
+    const fullUrlDiv = document.getElementById('ep-full-url');
+    
+    if (!epUrl || !epType || !fullUrlDiv) return;
+    
+    const baseUrl = epUrl.value.trim();
+    const apiType = epType.value;
+    
+    if (!baseUrl) {
+        fullUrlDiv.textContent = '';
+        return;
+    }
+    
+    let path = '';
+    switch (apiType) {
+        case 'openai':
+            path = '/v1/chat/completions';
+            break;
+        case 'anthropic':
+            path = '/v1/messages';
+            break;
+        case 'openai-responses':
+            path = '/v1/responses';
+            break;
+        default:
+            path = '/v1/chat/completions';
+    }
+    
+    const cleanBase = baseUrl.replace(/\/+$/, '');
+    const fullUrl = cleanBase.endsWith('/v1') 
+        ? cleanBase + path.replace('/v1', '')
+        : cleanBase + path;
+    
+    fullUrlDiv.textContent = '完整路径: ' + fullUrl;
+}
+
 // 初始化事件监听
 function initEventListeners() {
     // 登录表单
@@ -48,8 +87,37 @@ function initEventListeners() {
     // 端点表单
     document.getElementById('endpoint-form').addEventListener('submit', handleSaveEndpoint);
 
-    // 验证端点连接
+    // 监听 URL 和接口类型变化，更新完整路径显示
+    const epUrl = document.getElementById('ep-url');
+    const epType = document.getElementById('ep-type');
+    if (epUrl && epType) {
+        epUrl.addEventListener('input', updateEndpointFullUrl);
+        epType.addEventListener('change', updateEndpointFullUrl);
+    }
+
+    // 浏览模型按钮（表单内）
+    const btnBrowseModelsForm = document.getElementById('btn-browse-models-form');
+    if (btnBrowseModelsForm) {
+        btnBrowseModelsForm.addEventListener('click', handleBrowseModelsForm);
+    }
+
+    // 对话测试按钮
     document.getElementById('btn-check-endpoint').addEventListener('click', handleCheckEndpoint);
+
+    // 确认模型选择按钮
+    const btnConfirmModel = document.getElementById('btn-confirm-model');
+    if (btnConfirmModel) {
+        btnConfirmModel.addEventListener('click', () => {
+            const container = document.getElementById('models-list');
+            if (container && container.dataset.apiData) {
+                // 对外接口测试
+                confirmApiModelAndTest();
+            } else {
+                // 端点测试
+                confirmModelAndTest();
+            }
+        });
+    }
 
     // 设置页面的修改密码按钮
     const btnChangePwdSettings = document.getElementById('btn-change-password-settings');
@@ -62,18 +130,72 @@ function initEventListeners() {
     // 重置所有
     document.getElementById('btn-reset-all').addEventListener('click', handleResetAll);
 
+    // 添加端点按钮（端点列表页面）
+    const btnAddEndpoint = document.getElementById('btn-add-endpoint');
+    if (btnAddEndpoint) {
+        btnAddEndpoint.addEventListener('click', () => {
+            addEndpointToPool('');
+        });
+    }
+
+    // 模型搜索框
+    const modelSearch = document.getElementById('model-search');
+    if (modelSearch) {
+        modelSearch.addEventListener('input', (e) => {
+            searchModels(e.target.value);
+        });
+    }
+
+    // 端点搜索框（选择端点到池）
+    const endpointSearch = document.getElementById('endpoint-search');
+    if (endpointSearch) {
+        endpointSearch.addEventListener('input', (e) => {
+            searchEndpointsForPool(e.target.value);
+        });
+    }
+
+    // 确认添加端点到池按钮
+    const btnConfirmAddEndpoints = document.getElementById('btn-confirm-add-endpoints');
+    if (btnConfirmAddEndpoints) {
+        btnConfirmAddEndpoints.addEventListener('click', confirmAddEndpointsToPool);
+    }
+
     // 添加对外API
     document.getElementById('btn-add-api').addEventListener('click', () => {
         document.getElementById('api-modal-title').textContent = '添加对外接口';
         document.getElementById('api-form').reset();
         document.getElementById('api-id').value = '';
         document.getElementById('api-enabled').checked = true;
+        // 清空完整 URL 显示
+        const apiFullUrlDiv = document.getElementById('api-full-url');
+        if (apiFullUrlDiv) {
+            apiFullUrlDiv.textContent = '';
+        }
+        // 清空测试结果
+        const apiTestResult = document.getElementById('api-test-result');
+        if (apiTestResult) {
+            apiTestResult.style.display = 'none';
+        }
         loadPoolOptions('api-pool');
         showModal('api-modal');
     });
 
     // 对外API表单
     document.getElementById('api-form').addEventListener('submit', handleSaveApi);
+
+    // 对外接口对话测试按钮
+    const btnTestApi = document.getElementById('btn-test-api');
+    if (btnTestApi) {
+        btnTestApi.addEventListener('click', handleTestApi);
+    }
+
+    // 监听对外接口 URL 前缀变化，更新完整调用 URL
+    const apiPrefix = document.getElementById('api-prefix');
+    const apiType = document.getElementById('api-type');
+    if (apiPrefix && apiType) {
+        apiPrefix.addEventListener('input', updateApiFullUrlDisplay);
+        apiType.addEventListener('change', updateApiFullUrlDisplay);
+    }
 
     // 添加池
     document.getElementById('btn-add-pool').addEventListener('click', () => {
@@ -378,6 +500,7 @@ function renderEndpointsList() {
                         ${ep.enabled ? '禁用' : '启用'}
                     </button>
                     <button class="btn btn-small btn-outline" onclick="resetEndpoint('${escapeAttr(ep.id)}')">重置Token</button>
+                    <button class="btn btn-small" onclick="browseEndpointModels('${escapeAttr(ep.id)}', '${escapeAttr(ep.api_type)}')">浏览模型</button>
                     <button class="btn btn-small btn-danger" onclick="deleteEndpoint('${escapeAttr(ep.id)}')">删除</button>
                 </div>
             </div>
@@ -391,6 +514,12 @@ function addEndpointToPool(poolId) {
     document.getElementById('endpoint-form').reset();
     document.getElementById('ep-id').value = '';
     document.getElementById('ep-enabled').checked = true;
+    
+    // 清空完整路径显示
+    const fullUrlDiv = document.getElementById('ep-full-url');
+    if (fullUrlDiv) {
+        fullUrlDiv.textContent = '';
+    }
     
     // 设置池ID（如果有隐藏字段）
     const poolField = document.getElementById('ep-pool-id');
@@ -411,21 +540,42 @@ async function editEndpoint(id) {
     document.getElementById('ep-name').value = ep.name;
     document.getElementById('ep-url').value = ep.url;
     document.getElementById('ep-type').value = ep.api_type;
-    document.getElementById('ep-apikey').value = ''; // 不显示key
     document.getElementById('ep-limit').value = ep.token_limit || '';
     document.getElementById('ep-timeout').value = ep.timeout || 300;
     document.getElementById('ep-reset').value = ep.reset_policy || 'manual';
     document.getElementById('ep-enabled').checked = ep.enabled;
 
+    // 更新完整路径显示
+    updateEndpointFullUrl();
+
+    // 获取完整端点信息以显示 API Key
+    try {
+        const res = await fetch(`${API_BASE}/endpoints/${id}`);
+        if (res.ok) {
+            const fullEp = await res.json();
+            document.getElementById('ep-apikey').value = fullEp.config.api_key || '';
+        } else {
+            document.getElementById('ep-apikey').value = '';
+        }
+    } catch (e) {
+        document.getElementById('ep-apikey').value = '';
+    }
+
     showModal('endpoint-modal');
 }
 
-// 验证端点连接
-async function handleCheckEndpoint() {
-    const btn = document.getElementById('btn-check-endpoint');
+// 浏览模型（表单内）
+async function handleBrowseModelsForm() {
+    const btn = document.getElementById('btn-browse-models-form');
+    const checkResult = document.getElementById('check-result');
+    
     const originalText = btn.textContent;
-    btn.textContent = '验证中...';
+    btn.textContent = '加载中...';
     btn.disabled = true;
+    
+    if (checkResult) {
+        checkResult.style.display = 'none';
+    }
 
     const data = {
         name: document.getElementById('ep-name').value || 'test',
@@ -438,30 +588,242 @@ async function handleCheckEndpoint() {
     };
 
     if (!data.url) {
-        showToast('请先填写端点URL', 'error');
+        showToast('请先填写 Base URL', 'error');
+        btn.textContent = originalText;
+        btn.disabled = false;
+        return;
+    }
+
+    if (!data.api_key) {
+        showToast('请先填写 API Key', 'error');
         btn.textContent = originalText;
         btn.disabled = false;
         return;
     }
 
     try {
-        const res = await fetch(`${API_BASE}/endpoints/check`, {
+        const res = await fetch(`${API_BASE}/endpoints/models`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
         const result = await res.json();
-        if (result.success) {
-            showToast(result.message, 'success');
-        } else {
-            showToast(result.message, 'error');
+        
+        if (checkResult) {
+            checkResult.style.display = 'block';
+            if (result.success && result.models && result.models.length > 0) {
+                checkResult.style.background = 'rgba(76, 175, 80, 0.1)';
+                checkResult.style.border = '1px solid rgba(76, 175, 80, 0.3)';
+                
+                const modelsHtml = result.models.map(m => 
+                    `<div style="display: inline-block; padding: 4px 8px; margin: 4px; background: var(--bg-secondary); border-radius: 4px; font-size: 0.8125rem; font-family: var(--font-mono);">${escapeHtml(m.id)}</div>`
+                ).join('');
+                
+                checkResult.innerHTML = `
+                    <div style="color: #4caf50; font-weight: 500;">✓ 可用模型 (${result.models.length}个)</div>
+                    <div style="margin-top: 8px;">${modelsHtml}</div>
+                `;
+            } else if (result.success) {
+                checkResult.style.background = 'rgba(76, 175, 80, 0.1)';
+                checkResult.style.border = '1px solid rgba(76, 175, 80, 0.3)';
+                checkResult.innerHTML = `
+                    <div style="color: #4caf50; font-weight: 500;">✓ 连接成功</div>
+                    <div style="font-size: 0.8125rem; color: var(--text-secondary); margin-top: 4px;">未获取到模型列表</div>
+                `;
+            } else {
+                checkResult.style.background = 'rgba(244, 67, 54, 0.1)';
+                checkResult.style.border = '1px solid rgba(244, 67, 54, 0.3)';
+                checkResult.innerHTML = `
+                    <div style="color: #f44336; font-weight: 500;">✗ 获取失败</div>
+                    <div style="font-size: 0.8125rem; color: var(--text-secondary); margin-top: 4px;">${escapeHtml(result.message)}</div>
+                `;
+            }
         }
+        
+        showToast(result.success ? '模型列表获取成功' : result.message, result.success ? 'success' : 'error');
     } catch (e) {
-        showToast('验证请求失败: ' + e.message, 'error');
+        showToast('请求失败: ' + e.message, 'error');
+        if (checkResult) {
+            checkResult.style.display = 'block';
+            checkResult.style.background = 'rgba(244, 67, 54, 0.1)';
+            checkResult.style.border = '1px solid rgba(244, 67, 54, 0.3)';
+            checkResult.innerHTML = `
+                <div style="color: #f44336; font-weight: 500;">✗ 请求失败</div>
+                <div style="font-size: 0.8125rem; color: var(--text-secondary); margin-top: 4px;">${escapeHtml(e.message)}</div>
+            `;
+        }
     }
 
     btn.textContent = originalText;
     btn.disabled = false;
+}
+
+// 对话测试 - 先选择模型
+async function handleCheckEndpoint() {
+    const data = {
+        name: document.getElementById('ep-name').value || 'test',
+        url: document.getElementById('ep-url').value,
+        api_type: document.getElementById('ep-type').value,
+        api_key: document.getElementById('ep-apikey').value,
+        token_limit: 1000,
+        reset_policy: 'manual',
+        enabled: true
+    };
+
+    if (!data.url) {
+        showToast('请先填写 Base URL', 'error');
+        return;
+    }
+
+    if (!data.api_key) {
+        showToast('请先填写 API Key', 'error');
+        return;
+    }
+
+    // 先获取模型列表
+    const modelsList = document.getElementById('models-list');
+    const modelsModalFooter = document.getElementById('models-modal-footer');
+    const modelsModalTitle = document.getElementById('models-modal-title');
+    
+    if (modelsList) {
+        modelsList.innerHTML = '<p style="color: var(--text-secondary); padding: 16px; text-align: center;">加载模型列表...</p>';
+    }
+    if (modelsModalFooter) {
+        modelsModalFooter.style.display = 'none';
+    }
+    if (modelsModalTitle) {
+        modelsModalTitle.textContent = '选择测试模型';
+    }
+    showModal('models-modal');
+
+    try {
+        const res = await fetch(`${API_BASE}/endpoints/models`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        const result = await res.json();
+        
+        if (result.success && result.models && result.models.length > 0) {
+            // 显示模型选择列表
+            renderModelSelectionList(result.models, data);
+            if (modelsModalFooter) {
+                modelsModalFooter.style.display = 'block';
+            }
+        } else {
+            if (modelsList) {
+                modelsList.innerHTML = `<p style="color: var(--danger); padding: 16px; text-align: center;">获取模型列表失败: ${escapeHtml(result.message || '未知错误')}</p>`;
+            }
+        }
+    } catch (e) {
+        if (modelsList) {
+            modelsList.innerHTML = `<p style="color: var(--danger); padding: 16px; text-align: center;">请求失败: ${escapeHtml(e.message)}</p>`;
+        }
+    }
+}
+
+// 渲染模型选择列表（带单选按钮）
+function renderModelSelectionList(models, endpointData) {
+    const container = document.getElementById('models-list');
+    if (!container) return;
+    
+    container.innerHTML = models.map((m, index) => `
+        <div style="display: flex; align-items: center; padding: 10px 12px; background: var(--bg-tertiary); border-radius: var(--radius-sm); margin-bottom: 6px; cursor: pointer;" onclick="this.querySelector('input').checked = true;">
+            <input type="radio" name="selected-model" value="${escapeAttr(m.id)}" ${index === 0 ? 'checked' : ''} style="margin-right: 12px;">
+            <span style="flex: 1; font-family: var(--font-mono); font-size: 0.8125rem;">${escapeHtml(m.id)}</span>
+            ${m.owned_by ? `<span style="font-size: 0.75rem; color: var(--text-tertiary);">${escapeHtml(m.owned_by)}</span>` : ''}
+        </div>
+    `).join('');
+    
+    // 存储端点数据供后续使用
+    container.dataset.endpointData = JSON.stringify(endpointData);
+}
+
+// 确认模型选择并进行对话测试
+async function confirmModelAndTest() {
+    const selectedModel = document.querySelector('input[name="selected-model"]:checked');
+    if (!selectedModel) {
+        showToast('请选择一个模型', 'error');
+        return;
+    }
+    
+    const container = document.getElementById('models-list');
+    const endpointData = JSON.parse(container.dataset.endpointData || '{}');
+    
+    hideModal('models-modal');
+    
+    // 显示测试结果区域
+    const checkResult = document.getElementById('check-result');
+    const btn = document.getElementById('btn-check-endpoint');
+    
+    if (btn) {
+        btn.textContent = '测试中...';
+        btn.disabled = true;
+    }
+    
+    if (checkResult) {
+        checkResult.style.display = 'block';
+        checkResult.style.background = 'rgba(33, 150, 243, 0.1)';
+        checkResult.style.border = '1px solid rgba(33, 150, 243, 0.3)';
+        checkResult.innerHTML = `
+            <div style="color: #2196f3; font-weight: 500;">⟳ 正在测试模型: ${escapeHtml(selectedModel.value)}</div>
+        `;
+    }
+    
+    try {
+        const res = await fetch(`${API_BASE}/endpoints/check`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                ...endpointData,
+                model: selectedModel.value
+            })
+        });
+        const result = await res.json();
+        
+        if (checkResult) {
+            if (result.success) {
+                checkResult.style.background = 'rgba(76, 175, 80, 0.1)';
+                checkResult.style.border = '1px solid rgba(76, 175, 80, 0.3)';
+                checkResult.innerHTML = `
+                    <div style="color: #4caf50; font-weight: 500;">✓ 对话测试成功</div>
+                    <div style="font-size: 0.75rem; color: var(--text-tertiary); margin-top: 4px;">模型: ${escapeHtml(selectedModel.value)}</div>
+                    <div style="margin-top: 8px; padding: 12px; background: var(--bg-secondary); border-radius: var(--radius-sm);">
+                        <div style="font-size: 0.75rem; color: var(--text-tertiary); margin-bottom: 4px;">模型回复:</div>
+                        <div style="font-size: 0.875rem; color: var(--text-primary); line-height: 1.5;">${escapeHtml(result.message)}</div>
+                    </div>
+                `;
+            } else {
+                checkResult.style.background = 'rgba(244, 67, 54, 0.1)';
+                checkResult.style.border = '1px solid rgba(244, 67, 54, 0.3)';
+                checkResult.innerHTML = `
+                    <div style="color: #f44336; font-weight: 500;">✗ 对话测试失败</div>
+                    <div style="font-size: 0.75rem; color: var(--text-tertiary); margin-top: 4px;">模型: ${escapeHtml(selectedModel.value)}</div>
+                    <div style="font-size: 0.8125rem; color: var(--text-secondary); margin-top: 4px;">
+                        ${result.message}
+                        ${result.tested_url ? `<br>测试 URL: <code style="font-size: 0.75rem; background: var(--bg-secondary); padding: 2px 4px; border-radius: 3px;">${escapeHtml(result.tested_url)}</code>` : ''}
+                    </div>
+                `;
+            }
+        }
+        
+        showToast(result.success ? '对话测试成功' : result.message, result.success ? 'success' : 'error');
+    } catch (e) {
+        if (checkResult) {
+            checkResult.style.background = 'rgba(244, 67, 54, 0.1)';
+            checkResult.style.border = '1px solid rgba(244, 67, 54, 0.3)';
+            checkResult.innerHTML = `
+                <div style="color: #f44336; font-weight: 500;">✗ 请求失败</div>
+                <div style="font-size: 0.8125rem; color: var(--text-secondary); margin-top: 4px;">${escapeHtml(e.message)}</div>
+            `;
+        }
+        showToast('请求失败: ' + e.message, 'error');
+    }
+    
+    if (btn) {
+        btn.textContent = '对话测试';
+        btn.disabled = false;
+    }
 }
 
 // 保存端点
@@ -584,11 +946,389 @@ function switchTab(tab) {
     document.querySelectorAll('.tab-content').forEach(content => {
         content.classList.toggle('active', content.id === `tab-${tab}`);
     });
-    if (tab === 'dashboard' || tab === 'endpoints') {
+    // 切换标签时加载数据
+    if (tab === 'dashboard') {
         loadDashboard();
-    } else if (tab === 'apis') {
+    } else if (tab === 'endpoint-mgmt') {
+        loadEndpointsPage();
+    } else if (tab === 'pools') {
+        loadPoolsPage();
+    } else if (tab === 'api-mgmt') {
         loadApisPage();
     }
+}
+
+// ========== 端点管理页面 ==========
+
+// 加载端点管理页面
+async function loadEndpointsPage() {
+    try {
+        const statsRes = await fetch(`${API_BASE}/stats`);
+        const stats = await statsRes.json();
+        
+        currentEndpoints = stats.endpoints || [];
+        renderEndpointsList();
+    } catch (e) {
+        console.error('加载端点管理页面失败:', e);
+    }
+}
+
+// ========== 池管理页面 ==========
+
+// 加载池管理页面
+async function loadPoolsPage() {
+    try {
+        const statsRes = await fetch(`${API_BASE}/stats`);
+        const stats = await statsRes.json();
+        
+        currentEndpoints = stats.endpoints || [];
+        currentPools = stats.pools || [];
+        renderPoolsList();
+    } catch (e) {
+        console.error('加载池管理页面失败:', e);
+    }
+}
+
+// ========== 选择端点到池功能 ==========
+
+// 从池中移除端点（不删除端点，只是清除 pool_id）
+async function removeEndpointFromPool(endpointId) {
+    if (!confirm('确定要从池中移除此端点？移除后端点仍保留在端点管理中。')) {
+        return;
+    }
+    
+    try {
+        // 先获取端点完整信息（stats API 不返回 api_key）
+        const getRes = await fetch(`${API_BASE}/endpoints/${endpointId}`);
+        if (!getRes.ok) {
+            showToast('获取端点信息失败', 'error');
+            return;
+        }
+        const fullEndpoint = await getRes.json();
+        
+        // 更新端点，清除 pool_id
+        const res = await fetch(`${API_BASE}/endpoints/${endpointId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name: fullEndpoint.config.name,
+                url: fullEndpoint.config.url,
+                api_type: fullEndpoint.config.api_type,
+                api_key: fullEndpoint.config.api_key,
+                token_limit: fullEndpoint.config.token_limit,
+                timeout: fullEndpoint.config.timeout || 300,
+                reset_policy: fullEndpoint.config.reset_policy || 'manual',
+                enabled: fullEndpoint.config.enabled,
+                pool_id: ""  // 发送空字符串表示清除池关联
+            })
+        });
+        
+        if (res.ok) {
+            showToast('已从池中移除端点', 'success');
+            // 刷新池管理页面
+            loadPoolsPage();
+        } else {
+            const data = await res.json();
+            showToast(data.error?.message || '操作失败', 'error');
+        }
+    } catch (e) {
+        console.error('从池中移除端点失败:', e);
+        showToast('网络错误', 'error');
+    }
+}
+
+// 显示选择端点模态框
+function showSelectEndpointModal(poolId, poolName) {
+    document.getElementById('select-pool-id').value = poolId;
+    document.getElementById('select-endpoint-title').textContent = `选择端点到 ${poolName}`;
+    
+    // 获取不在任何池中的端点（每个端点只能归属一个池）
+    const availableEndpoints = currentEndpoints.filter(ep => !ep.pool_id || ep.pool_id === '');
+    renderAvailableEndpointsList(availableEndpoints);
+    showModal('select-endpoint-modal');
+}
+
+// 渲染可选端点列表
+function renderAvailableEndpointsList(endpoints) {
+    const container = document.getElementById('available-endpoints-list');
+    if (!container) return;
+    
+    if (endpoints.length === 0) {
+        container.innerHTML = '<p style="color: var(--text-secondary); padding: 16px; text-align: center;">没有可用的端点，请先在「端点管理」中添加端点</p>';
+        return;
+    }
+    
+    container.innerHTML = endpoints.map(ep => {
+        const statusClass = !ep.enabled ? 'disabled' : ep.tokens_remaining === 0 ? 'exhausted' : 'active';
+        const statusText = !ep.enabled ? '已禁用' : ep.tokens_remaining === 0 ? '已耗尽' : '正常';
+        
+        return `
+            <div style="display: flex; align-items: center; padding: 12px; background: var(--bg-tertiary); border-radius: var(--radius-sm); margin-bottom: 8px;">
+                <input type="checkbox" class="endpoint-checkbox" data-id="${ep.id}" style="margin-right: 12px;">
+                <div style="flex: 1;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="font-weight: 500;">${escapeHtml(ep.name)}</span>
+                        <span class="status-badge ${statusClass}" style="font-size: 0.625rem;">${statusText}</span>
+                    </div>
+                    <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px;">
+                        <span>${ep.api_type.toUpperCase()}</span>
+                        <span style="margin-left: 8px;">${truncate(ep.url, 30)}</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// 搜索端点
+function searchEndpointsForPool(query) {
+    // 获取不在任何池中的端点（每个端点只能归属一个池）
+    const availableEndpoints = currentEndpoints.filter(ep => !ep.pool_id || ep.pool_id === '');
+    
+    const filtered = availableEndpoints.filter(ep => 
+        ep.name.toLowerCase().includes(query.toLowerCase()) ||
+        ep.url.toLowerCase().includes(query.toLowerCase())
+    );
+    
+    renderAvailableEndpointsList(filtered);
+}
+
+// 确认添加端点到池
+async function confirmAddEndpointsToPool() {
+    const poolId = document.getElementById('select-pool-id').value;
+    const checkboxes = document.querySelectorAll('.endpoint-checkbox:checked');
+    
+    if (checkboxes.length === 0) {
+        showToast('请选择至少一个端点', 'error');
+        return;
+    }
+    
+    const endpointIds = Array.from(checkboxes).map(cb => cb.dataset.id);
+    
+    try {
+        // 批量更新端点的池 ID
+        for (const endpointId of endpointIds) {
+            // 先获取端点完整信息
+            const getRes = await fetch(`${API_BASE}/endpoints/${endpointId}`);
+            if (!getRes.ok) {
+                throw new Error('获取端点信息失败');
+            }
+            const fullEndpoint = await getRes.json();
+            
+            // 更新 pool_id
+            const res = await fetch(`${API_BASE}/endpoints/${endpointId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: fullEndpoint.config.name,
+                    url: fullEndpoint.config.url,
+                    api_type: fullEndpoint.config.api_type,
+                    api_key: fullEndpoint.config.api_key,
+                    token_limit: fullEndpoint.config.token_limit,
+                    timeout: fullEndpoint.config.timeout || 300,
+                    reset_policy: fullEndpoint.config.reset_policy || 'manual',
+                    enabled: fullEndpoint.config.enabled,
+                    pool_id: poolId
+                })
+            });
+            
+            if (!res.ok) {
+                const data = await res.json();
+                throw new Error(data.error?.message || '更新失败');
+            }
+        }
+        
+        showToast(`成功添加 ${endpointIds.length} 个端点到池`, 'success');
+        hideModal('select-endpoint-modal');
+        
+        // 刷新数据
+        loadPoolsPage();
+    } catch (e) {
+        console.error('添加端点到池失败:', e);
+        showToast('添加端点到池失败: ' + e.message, 'error');
+    }
+}
+
+// ========== 模型浏览功能 ==========
+
+// 浏览指定端点的模型列表
+async function browseEndpointModels(endpointId, apiType) {
+    // 从端点列表中获取端点信息
+    const ep = currentEndpoints.find(e => e.id === endpointId);
+    if (!ep) {
+        showToast('端点不存在', 'error');
+        return;
+    }
+
+    // 显示加载状态
+    const modelsList = document.getElementById('models-list');
+    if (modelsList) {
+        modelsList.innerHTML = '<p style="color: var(--text-secondary); padding: 16px; text-align: center;">加载中...</p>';
+    }
+    showModal('models-modal');
+
+    try {
+        // 先获取端点完整信息（包含 api_key）
+        const epRes = await fetch(`${API_BASE}/endpoints/${endpointId}`);
+        if (!epRes.ok) {
+            throw new Error('获取端点信息失败');
+        }
+        const fullEp = await epRes.json();
+
+        // 调用浏览模型 API
+        const res = await fetch(`${API_BASE}/endpoints/models`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name: fullEp.config.name,
+                url: fullEp.config.url,
+                api_type: fullEp.config.api_type,
+                api_key: fullEp.config.api_key,
+                token_limit: 1000,
+                reset_policy: 'manual',
+                enabled: true
+            })
+        });
+        
+        const result = await res.json();
+        
+        if (result.success && result.models && result.models.length > 0) {
+            // 显示从 API 获取的真实模型列表
+            renderRealModelsList(result.models);
+        } else if (result.success) {
+            if (modelsList) {
+                modelsList.innerHTML = '<p style="color: var(--text-secondary); padding: 16px; text-align: center;">连接成功，但未获取到模型列表</p>';
+            }
+        } else {
+            if (modelsList) {
+                modelsList.innerHTML = `<p style="color: var(--danger); padding: 16px; text-align: center;">获取失败: ${escapeHtml(result.message)}</p>`;
+            }
+        }
+    } catch (e) {
+        console.error('获取模型列表失败:', e);
+        if (modelsList) {
+            modelsList.innerHTML = `<p style="color: var(--danger); padding: 16px; text-align: center;">请求失败: ${escapeHtml(e.message)}</p>`;
+        }
+    }
+}
+
+// 渲染真实模型列表
+function renderRealModelsList(models) {
+    const container = document.getElementById('models-list');
+    if (!container) return;
+    
+    if (models.length === 0) {
+        container.innerHTML = '<p style="color: var(--text-secondary); padding: 16px; text-align: center;">暂无可用模型</p>';
+        return;
+    }
+    
+    container.innerHTML = models.map(m => `
+        <div style="display: flex; align-items: center; padding: 10px 12px; background: var(--bg-tertiary); border-radius: var(--radius-sm); margin-bottom: 6px;">
+            <span style="flex: 1; font-family: var(--font-mono); font-size: 0.8125rem;">${escapeHtml(m.id)}</span>
+            ${m.owned_by ? `<span style="font-size: 0.75rem; color: var(--text-tertiary);">${escapeHtml(m.owned_by)}</span>` : ''}
+        </div>
+    `).join('');
+}
+
+// 浏览模型列表（显示所有模型）
+async function browseModels() {
+    try {
+        // 获取当前端点的 API 类型来决定显示哪些模型
+        const openaiEndpoints = currentEndpoints.filter(ep => ep.api_type === 'openai' || ep.api_type === 'openai-responses');
+        const anthropicEndpoints = currentEndpoints.filter(ep => ep.api_type === 'anthropic');
+        
+        // 常见模型列表
+        const models = {
+            openai: [
+                { id: 'gpt-4o', name: 'GPT-4o', description: '最新旗舰模型，支持多模态' },
+                { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: '性价比最高的小型模型' },
+                { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', description: 'GPT-4 Turbo with vision' },
+                { id: 'gpt-4', name: 'GPT-4', description: '强大的推理能力' },
+                { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', description: '快速且经济实惠' },
+                { id: 'o1-preview', name: 'o1-preview', description: '推理模型预览版' },
+                { id: 'o1-mini', name: 'o1-mini', description: '小型推理模型' },
+            ],
+            anthropic: [
+                { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', description: '最新旗舰模型' },
+                { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', description: '快速轻量模型' },
+                { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', description: '最强大的推理能力' },
+                { id: 'claude-3-sonnet-20240229', name: 'Claude 3 Sonnet', description: '平衡性能与速度' },
+                { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', description: '最快速的响应' },
+            ]
+        };
+        
+        let allModels = [];
+        if (openaiEndpoints.length > 0) {
+            allModels = allModels.concat(models.openai.map(m => ({ ...m, type: 'OpenAI' })));
+        }
+        if (anthropicEndpoints.length > 0) {
+            allModels = allModels.concat(models.anthropic.map(m => ({ ...m, type: 'Anthropic' })));
+        }
+        
+        // 如果没有端点，显示所有模型
+        if (allModels.length === 0) {
+            allModels = [
+                ...models.openai.map(m => ({ ...m, type: 'OpenAI' })),
+                ...models.anthropic.map(m => ({ ...m, type: 'Anthropic' }))
+            ];
+        }
+        
+        renderModelsList(allModels);
+        showModal('models-modal');
+    } catch (e) {
+        console.error('获取模型列表失败:', e);
+        showToast('获取模型列表失败', 'error');
+    }
+}
+
+// 渲染模型列表
+function renderModelsList(models) {
+    const container = document.getElementById('models-list');
+    if (!container) return;
+    
+    if (models.length === 0) {
+        container.innerHTML = '<p style="color: var(--text-secondary); padding: 16px; text-align: center;">暂无可用模型</p>';
+        return;
+    }
+    
+    container.innerHTML = models.map(model => `
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: var(--bg-tertiary); border-radius: var(--radius-sm); margin-bottom: 8px;">
+            <div>
+                <span style="font-weight: 500;">${escapeHtml(model.name)}</span>
+                <span style="font-size: 0.75rem; color: var(--text-tertiary); margin-left: 8px;">${model.type}</span>
+                <p style="font-size: 0.8125rem; color: var(--text-secondary); margin-top: 4px;">${escapeHtml(model.description)}</p>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <code style="font-size: 0.75rem; background: var(--bg-secondary); padding: 2px 6px; border-radius: 4px;">${escapeHtml(model.id)}</code>
+            </div>
+        </div>
+    `).join('');
+}
+
+// 搜索模型
+function searchModels(query) {
+    const allModels = [
+        { id: 'gpt-4o', name: 'GPT-4o', description: '最新旗舰模型，支持多模态', type: 'OpenAI' },
+        { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: '性价比最高的小型模型', type: 'OpenAI' },
+        { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', description: 'GPT-4 Turbo with vision', type: 'OpenAI' },
+        { id: 'gpt-4', name: 'GPT-4', description: '强大的推理能力', type: 'OpenAI' },
+        { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', description: '快速且经济实惠', type: 'OpenAI' },
+        { id: 'o1-preview', name: 'o1-preview', description: '推理模型预览版', type: 'OpenAI' },
+        { id: 'o1-mini', name: 'o1-mini', description: '小型推理模型', type: 'OpenAI' },
+        { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', description: '最新旗舰模型', type: 'Anthropic' },
+        { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', description: '快速轻量模型', type: 'Anthropic' },
+        { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', description: '最强大的推理能力', type: 'Anthropic' },
+        { id: 'claude-3-sonnet-20240229', name: 'Claude 3 Sonnet', description: '平衡性能与速度', type: 'Anthropic' },
+        { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', description: '最快速的响应', type: 'Anthropic' },
+    ];
+    
+    const filtered = allModels.filter(model => 
+        model.id.toLowerCase().includes(query.toLowerCase()) ||
+        model.name.toLowerCase().includes(query.toLowerCase()) ||
+        model.description.toLowerCase().includes(query.toLowerCase())
+    );
+    
+    renderModelsList(filtered);
 }
 
 // 显示/隐藏页面
@@ -639,9 +1379,31 @@ function renderApisList() {
         return;
     }
 
+    // 优先使用 https
+    const baseUrl = window.location.protocol === 'https:' 
+        ? window.location.origin 
+        : window.location.origin.replace('http://', 'https://');
+
     container.innerHTML = currentApis.map(api => {
         const statusClass = api.enabled ? 'active' : 'disabled';
         const statusText = api.enabled ? '已启用' : '已禁用';
+        
+        // 构建完整调用 URL
+        let examplePath = '';
+        switch (api.api_type) {
+            case 'openai':
+                examplePath = '/chat/completions';
+                break;
+            case 'anthropic':
+                examplePath = '/messages';
+                break;
+            case 'openai-responses':
+                examplePath = '/responses';
+                break;
+            default:
+                examplePath = '/chat/completions';
+        }
+        const fullCallUrl = `${baseUrl}${api.prefix}${examplePath}`;
         
         return `
             <div class="endpoint-card">
@@ -668,6 +1430,9 @@ function renderApisList() {
                         <label>端点数</label>
                         <span>${api.endpoint_count}</span>
                     </div>
+                </div>
+                <div style="margin-top: 8px; padding: 8px 12px; background: var(--bg-secondary); border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-secondary); word-break: break-all;">
+                    调用示例: ${escapeHtml(fullCallUrl)}
                 </div>
                 <div class="endpoint-actions">
                     <button class="btn btn-small" onclick="editApi('${escapeAttr(api.id)}')">编辑</button>
@@ -728,7 +1493,7 @@ function renderPoolsList() {
                             ${ep.enabled ? '禁用' : '启用'}
                         </button>
                         <button class="btn btn-small" onclick="resetEndpoint('${escapeAttr(ep.id)}')" style="font-size: 0.6875rem;">重置</button>
-                        <button class="btn btn-small btn-danger" onclick="deleteEndpoint('${escapeAttr(ep.id)}')" style="font-size: 0.6875rem;">删除</button>
+                        <button class="btn btn-small btn-warning" onclick="removeEndpointFromPool('${escapeAttr(ep.id)}')" style="font-size: 0.6875rem;">从池中移除</button>
                     </div>
                 </div>
             `;
@@ -767,7 +1532,7 @@ function renderPoolsList() {
                 <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border);">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                         <span style="font-size: 0.8125rem; font-weight: 500; color: var(--text-secondary);">池内端点</span>
-                        <button class="btn btn-small btn-primary" onclick="addEndpointToPool('${escapeAttr(pool.id)}')" style="font-size: 0.6875rem;">+ 添加端点</button>
+                        <button class="btn btn-small" onclick="showSelectEndpointModal('${escapeAttr(pool.id)}', '${escapeAttr(pool.name)}')" style="font-size: 0.6875rem;">选择端点</button>
                     </div>
                     ${endpointsHtml}
                 </div>
@@ -811,7 +1576,273 @@ async function editApi(id) {
     await loadPoolOptions('api-pool');
     document.getElementById('api-pool').value = api.pool_id;
     
+    // 更新完整 URL 显示
+    updateApiFullUrlDisplay();
+    
+    // 清空测试结果
+    const apiTestResult = document.getElementById('api-test-result');
+    if (apiTestResult) {
+        apiTestResult.style.display = 'none';
+    }
+    
     showModal('api-modal');
+}
+
+// 对外接口对话测试 - 先选择模型
+async function handleTestApi() {
+    const prefix = document.getElementById('api-prefix').value.trim();
+    const apiKey = document.getElementById('api-key').value;
+    const apiType = document.getElementById('api-type').value;
+
+    if (!prefix) {
+        showToast('请先填写 URL 前缀', 'error');
+        return;
+    }
+
+    // 构建测试 URL
+    const baseUrl = window.location.origin;
+    const cleanPrefix = prefix.startsWith('/') ? prefix : '/' + prefix;
+    
+    // 获取关联的端点池信息
+    const poolId = document.getElementById('api-pool').value;
+    if (!poolId) {
+        showToast('请先选择关联端点池', 'error');
+        return;
+    }
+
+    // 先获取模型列表
+    const modelsList = document.getElementById('models-list');
+    const modelsModalFooter = document.getElementById('models-modal-footer');
+    const modelsModalTitle = document.getElementById('models-modal-title');
+    
+    if (modelsList) {
+        modelsList.innerHTML = '<p style="color: var(--text-secondary); padding: 16px; text-align: center;">加载模型列表...</p>';
+    }
+    if (modelsModalFooter) {
+        modelsModalFooter.style.display = 'none';
+    }
+    if (modelsModalTitle) {
+        modelsModalTitle.textContent = '选择测试模型';
+    }
+    showModal('models-modal');
+
+    // 获取池中的端点信息来调用模型列表
+    try {
+        const statsRes = await fetch(`${API_BASE}/stats`);
+        const stats = await statsRes.json();
+        const poolEndpoints = (stats.endpoints || []).filter(ep => ep.pool_id === poolId);
+        
+        if (poolEndpoints.length === 0) {
+            if (modelsList) {
+                modelsList.innerHTML = '<p style="color: var(--danger); padding: 16px; text-align: center;">关联池中没有端点，请先添加端点</p>';
+            }
+            return;
+        }
+
+        // 使用第一个端点获取模型列表
+        const endpoint = poolEndpoints[0];
+        const epRes = await fetch(`${API_BASE}/endpoints/${endpoint.id}`);
+        if (!epRes.ok) {
+            throw new Error('获取端点信息失败');
+        }
+        const fullEp = await epRes.json();
+
+        const modelsRes = await fetch(`${API_BASE}/endpoints/models`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name: fullEp.config.name,
+                url: fullEp.config.url,
+                api_type: fullEp.config.api_type,
+                api_key: fullEp.config.api_key,
+                token_limit: 1000,
+                reset_policy: 'manual',
+                enabled: true
+            })
+        });
+        const modelsResult = await modelsRes.json();
+        
+        if (modelsResult.success && modelsResult.models && modelsResult.models.length > 0) {
+            // 显示模型选择列表
+            renderApiModelSelectionList(modelsResult.models, {
+                prefix: cleanPrefix,
+                api_key: apiKey,
+                api_type: apiType,
+                base_url: baseUrl
+            });
+            if (modelsModalFooter) {
+                modelsModalFooter.style.display = 'block';
+            }
+        } else {
+            if (modelsList) {
+                modelsList.innerHTML = `<p style="color: var(--danger); padding: 16px; text-align: center;">获取模型列表失败: ${escapeHtml(modelsResult.message || '未知错误')}</p>`;
+            }
+        }
+    } catch (e) {
+        if (modelsList) {
+            modelsList.innerHTML = `<p style="color: var(--danger); padding: 16px; text-align: center;">请求失败: ${escapeHtml(e.message)}</p>`;
+        }
+    }
+}
+
+// 渲染对外接口模型选择列表
+function renderApiModelSelectionList(models, apiData) {
+    const container = document.getElementById('models-list');
+    if (!container) return;
+    
+    container.innerHTML = models.map((m, index) => `
+        <div style="display: flex; align-items: center; padding: 10px 12px; background: var(--bg-tertiary); border-radius: var(--radius-sm); margin-bottom: 6px; cursor: pointer;" onclick="this.querySelector('input').checked = true;">
+            <input type="radio" name="selected-model" value="${escapeAttr(m.id)}" ${index === 0 ? 'checked' : ''} style="margin-right: 12px;">
+            <span style="flex: 1; font-family: var(--font-mono); font-size: 0.8125rem;">${escapeHtml(m.id)}</span>
+            ${m.owned_by ? `<span style="font-size: 0.75rem; color: var(--text-tertiary);">${escapeHtml(m.owned_by)}</span>` : ''}
+        </div>
+    `).join('');
+    
+    container.dataset.apiData = JSON.stringify(apiData);
+}
+
+// 确认对外接口模型选择并进行对话测试
+async function confirmApiModelAndTest() {
+    const selectedModel = document.querySelector('input[name="selected-model"]:checked');
+    if (!selectedModel) {
+        showToast('请选择一个模型', 'error');
+        return;
+    }
+    
+    const container = document.getElementById('models-list');
+    const apiData = JSON.parse(container.dataset.apiData || '{}');
+    
+    hideModal('models-modal');
+    
+    const testResult = document.getElementById('api-test-result');
+    
+    if (testResult) {
+        testResult.style.display = 'block';
+        testResult.style.background = 'rgba(33, 150, 243, 0.1)';
+        testResult.style.border = '1px solid rgba(33, 150, 243, 0.3)';
+        testResult.innerHTML = `
+            <div style="color: #2196f3; font-weight: 500;">⟳ 正在测试模型: ${escapeHtml(selectedModel.value)}</div>
+        `;
+    }
+    
+    try {
+        // 使用关联池中的端点进行测试
+        const poolId = document.getElementById('api-pool').value;
+        const statsRes = await fetch(`${API_BASE}/stats`);
+        const stats = await statsRes.json();
+        const poolEndpoints = (stats.endpoints || []).filter(ep => ep.pool_id === poolId);
+        
+        if (poolEndpoints.length === 0) {
+            if (testResult) {
+                testResult.style.background = 'rgba(244, 67, 54, 0.1)';
+                testResult.style.border = '1px solid rgba(244, 67, 54, 0.3)';
+                testResult.innerHTML = `
+                    <div style="color: #f44336; font-weight: 500;">✗ 测试失败</div>
+                    <div style="font-size: 0.8125rem; color: var(--text-secondary); margin-top: 4px;">关联池中没有端点</div>
+                `;
+            }
+            return;
+        }
+        
+        // 获取端点完整信息
+        const endpoint = poolEndpoints[0];
+        const epRes = await fetch(`${API_BASE}/endpoints/${endpoint.id}`);
+        if (!epRes.ok) {
+            throw new Error('获取端点信息失败');
+        }
+        const fullEp = await epRes.json();
+        
+        // 使用后端的 check 接口进行测试
+        const checkRes = await fetch(`${API_BASE}/endpoints/check`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name: fullEp.config.name,
+                url: fullEp.config.url,
+                api_type: fullEp.config.api_type,
+                api_key: fullEp.config.api_key,
+                token_limit: 1000,
+                reset_policy: 'manual',
+                enabled: true,
+                model: selectedModel.value
+            })
+        });
+        const result = await checkRes.json();
+        
+        if (testResult) {
+            if (result.success) {
+                testResult.style.background = 'rgba(76, 175, 80, 0.1)';
+                testResult.style.border = '1px solid rgba(76, 175, 80, 0.3)';
+                testResult.innerHTML = `
+                    <div style="color: #4caf50; font-weight: 500;">✓ 对话测试成功</div>
+                    <div style="font-size: 0.75rem; color: var(--text-tertiary); margin-top: 4px;">模型: ${escapeHtml(selectedModel.value)}</div>
+                    <div style="margin-top: 8px; padding: 12px; background: var(--bg-secondary); border-radius: var(--radius-sm);">
+                        <div style="font-size: 0.75rem; color: var(--text-tertiary); margin-bottom: 4px;">模型回复:</div>
+                        <div style="font-size: 0.875rem; color: var(--text-primary); line-height: 1.5;">${escapeHtml(result.message)}</div>
+                    </div>
+                `;
+            } else {
+                testResult.style.background = 'rgba(244, 67, 54, 0.1)';
+                testResult.style.border = '1px solid rgba(244, 67, 54, 0.3)';
+                testResult.innerHTML = `
+                    <div style="color: #f44336; font-weight: 500;">✗ 对话测试失败</div>
+                    <div style="font-size: 0.75rem; color: var(--text-tertiary); margin-top: 4px;">模型: ${escapeHtml(selectedModel.value)}</div>
+                    <div style="font-size: 0.8125rem; color: var(--text-secondary); margin-top: 4px;">
+                        ${result.message}
+                        ${result.tested_url ? `<br>测试 URL: <code style="font-size: 0.75rem; background: var(--bg-secondary); padding: 2px 4px; border-radius: 3px;">${escapeHtml(result.tested_url)}</code>` : ''}
+                    </div>
+                `;
+            }
+        }
+        
+        showToast(result.success ? '对话测试成功' : result.message, result.success ? 'success' : 'error');
+    } catch (e) {
+        if (testResult) {
+            testResult.style.background = 'rgba(244, 67, 54, 0.1)';
+            testResult.style.border = '1px solid rgba(244, 67, 54, 0.3)';
+            testResult.innerHTML = `
+                <div style="color: #f44336; font-weight: 500;">✗ 请求失败</div>
+                <div style="font-size: 0.8125rem; color: var(--text-secondary); margin-top: 4px;">${escapeHtml(e.message)}</div>
+            `;
+        }
+        showToast('请求失败: ' + e.message, 'error');
+    }
+}
+
+// 更新对外接口完整 URL 显示
+function updateApiFullUrlDisplay() {
+    const prefix = document.getElementById('api-prefix').value.trim();
+    const type = document.getElementById('api-type').value;
+    const fullUrlDiv = document.getElementById('api-full-url');
+    if (!fullUrlDiv) return;
+    
+    if (!prefix) {
+        fullUrlDiv.textContent = '';
+        return;
+    }
+    
+    // 优先使用 https
+    const baseUrl = window.location.protocol === 'https:' 
+        ? window.location.origin 
+        : window.location.origin.replace('http://', 'https://');
+    const cleanPrefix = prefix.startsWith('/') ? prefix : '/' + prefix;
+    
+    let examplePath = '';
+    switch (type) {
+        case 'openai':
+            examplePath = '/chat/completions';
+            break;
+        case 'anthropic':
+            examplePath = '/messages';
+            break;
+        case 'openai-responses':
+            examplePath = '/responses';
+            break;
+        default:
+            examplePath = '/chat/completions';
+    }
+    
+    fullUrlDiv.textContent = `完整调用: ${baseUrl}${cleanPrefix}${examplePath}`;
 }
 
 // 保存对外API

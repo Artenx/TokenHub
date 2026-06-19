@@ -118,6 +118,7 @@ async fn main() -> std::io::Result<()> {
             .route("/admin/api/endpoints", web::get().to(admin::list_endpoints))
             .route("/admin/api/endpoints", web::post().to(admin::create_endpoint))
             .route("/admin/api/endpoints/check", web::post().to(admin::check_endpoint))
+            .route("/admin/api/endpoints/models", web::post().to(admin::list_models))
             .route("/admin/api/endpoints/{id}", web::get().to(admin::get_endpoint))
             .route("/admin/api/endpoints/{id}", web::put().to(admin::update_endpoint))
             .route("/admin/api/endpoints/{id}", web::delete().to(admin::delete_endpoint))

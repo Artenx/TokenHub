@@ -200,6 +200,9 @@ pub struct EndpointRequest {
     pub enabled: Option<bool>,
     pub pool_id: Option<String>,
     pub timeout: Option<u64>,
+    /// 测试时指定的模型名称（可选）
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 /// 池创建/更新请求

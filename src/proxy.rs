@@ -197,15 +197,38 @@ pub async fn forward_stream_request(
 }
 
 /// 转发请求到指定端点
+/// 根据 API 类型和 base_url 构建完整的目标 URL
+fn build_target_url(base_url: &str, path: &str, api_type: &ApiType) -> String {
+    let base = base_url.trim_end_matches('/');
+    let path = path.trim_start_matches('/');
+    
+    // 如果 base_url 已经包含 /v1 等路径前缀，则直接使用
+    // 否则根据 API 类型自动补全
+    let full_base = if base.ends_with("/v1") || base.ends_with("/v1/") {
+        base.to_string()
+    } else {
+        match api_type {
+            ApiType::OpenAI | ApiType::OpenAIResponses => {
+                format!("{}/v1", base)
+            }
+            ApiType::Anthropic => {
+                format!("{}/v1", base)
+            }
+        }
+    };
+    
+    format!("{}/{}", full_base, path)
+}
+
 async fn forward_to_endpoint(
     state: &AppState,
     req: &HttpRequest,
     body: &bytes::Bytes,
     endpoint: &EndpointState,
     path: &str,
-    _api_type: &ApiType,
+    api_type: &ApiType,
 ) -> Result<HttpResponse, AppError> {
-    let target_url = format!("{}/{}", endpoint.config.url.trim_end_matches('/'), path.trim_start_matches('/'));
+    let target_url = build_target_url(&endpoint.config.url, path, api_type);
     debug!("转发到: {}", target_url);
 
     let mut request_builder = state.http_client.request(

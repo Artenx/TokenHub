@@ -142,8 +142,17 @@ impl AppState {
         if let Some(enabled) = req.enabled {
             ep.config.enabled = enabled;
         }
-        if req.pool_id.is_some() {
-            ep.config.pool_id = req.pool_id;
+        // 更新 pool_id: Some("") 表示清除，Some(非空) 表示设置，None 表示不更新
+        match req.pool_id {
+            Some(ref id) if id.is_empty() => {
+                ep.config.pool_id = None;
+            }
+            Some(_) => {
+                ep.config.pool_id = req.pool_id;
+            }
+            None => {
+                // 不更新 pool_id
+            }
         }
         if let Some(timeout) = req.timeout {
             ep.config.timeout = timeout;
