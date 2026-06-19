@@ -10,7 +10,6 @@
 - Token 限额管理与实时统计
 - 自定义 API 前缀路由
 - Web 管理后台
-- HTTPS 支持（Nginx 反向代理）
 
 ## 快速部署
 
@@ -20,7 +19,6 @@
 
 - Linux 操作系统
 - Rust 编译环境（1.75+）
-- Nginx（可选，用于 HTTPS）
 
 #### 2. 编译
 
@@ -116,34 +114,13 @@ curl http://localhost:8080/health
 | 默认密码 | `admin123` |
 | API 端点 | `http://your-ip:8080/v1/chat/completions` |
 
-## Nginx HTTPS 配置
-
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name your-domain.com;
-
-    ssl_certificate /etc/nginx/ssl/cert.pem;
-    ssl_certificate_key /etc/nginx/ssl/key.pem;
-
-    location / {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_buffering off;
-        proxy_read_timeout 300s;
-    }
-}
-```
-
 ## 使用示例
 
 ```bash
 # 调用 API
-curl https://your-domain.com/v1/chat/completions \
+curl http://your-ip:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-api-key" \
   -d '{
     "model": "gpt-4",
     "messages": [{"role": "user", "content": "Hello"}],
