@@ -51,16 +51,30 @@ function updateModelMappingsVisibility() {
 }
 
 // 添加模型映射行
-function addModelMappingRow(clientModel, endpointModel) {
+function addModelMappingRow(clientModel, endpointModel, models = []) {
     const container = document.getElementById('model-mappings-list');
     if (!container) return;
+    
+    // 如果没有传入模型列表，尝试从容器的 data 属性获取
+    if (models.length === 0) {
+        models = container.dataset.models ? JSON.parse(container.dataset.models) : [];
+    }
+    
+    // 构建模型选项
+    let modelOptions = '<option value="">选择端点模型</option>';
+    models.forEach(m => {
+        const selected = m === endpointModel ? 'selected' : '';
+        modelOptions += `<option value="${escapeAttr(m)}" ${selected}>${escapeHtml(m)}</option>`;
+    });
     
     const row = document.createElement('div');
     row.style.cssText = 'display: flex; gap: 8px; margin-bottom: 8px; align-items: center;';
     row.innerHTML = `
         <input type="text" class="mapping-client-model" placeholder="客户端模型名" value="${escapeHtml(clientModel)}" style="flex: 1;">
         <span style="color: var(--text-tertiary);">→</span>
-        <input type="text" class="mapping-endpoint-model" placeholder="端点模型名" value="${escapeHtml(endpointModel)}" style="flex: 1;">
+        <select class="mapping-endpoint-model" style="flex: 1;">
+            ${modelOptions}
+        </select>
         <button type="button" class="btn btn-small btn-danger" onclick="this.parentElement.remove()">删除</button>
     `;
     container.appendChild(row);
@@ -84,13 +98,16 @@ function getModelMappings() {
 }
 
 // 加载模型映射数据
-function loadModelMappings(mappings) {
+function loadModelMappings(mappings, models = []) {
     const container = document.getElementById('model-mappings-list');
     if (!container) return;
     
+    // 存储模型列表到容器的 data 属性
+    container.dataset.models = JSON.stringify(models);
+    
     container.innerHTML = '';
     if (mappings && mappings.length > 0) {
-        mappings.forEach(m => addModelMappingRow(m.client_model, m.endpoint_model));
+        mappings.forEach(m => addModelMappingRow(m.client_model, m.endpoint_model, models));
     }
 }
 
@@ -694,8 +711,33 @@ async function editEndpoint(id) {
         if (res.ok) {
             const fullEp = await res.json();
             document.getElementById('ep-apikey').value = fullEp.config.api_key || '';
-            // 加载模型映射
-            loadModelMappings(fullEp.config.model_mappings || []);
+            
+            // 获取模型列表
+            let models = [];
+            try {
+                const modelsRes = await fetch(`${API_BASE}/endpoints/models`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: fullEp.config.name,
+                        url: fullEp.config.url,
+                        api_type: fullEp.config.api_type,
+                        api_key: fullEp.config.api_key,
+                        token_limit: 1000,
+                        reset_policy: 'manual',
+                        enabled: true
+                    })
+                });
+                const modelsResult = await modelsRes.json();
+                if (modelsResult.success && modelsResult.models) {
+                    models = modelsResult.models.map(m => typeof m === 'object' ? m.id : m);
+                }
+            } catch (e) {
+                console.error('获取模型列表失败:', e);
+            }
+            
+            // 加载模型映射（传入模型列表）
+            loadModelMappings(fullEp.config.model_mappings || [], models);
         } else {
             document.getElementById('ep-apikey').value = '';
             loadModelMappings([]);
