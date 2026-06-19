@@ -515,10 +515,19 @@ function addEndpointToPool(poolId) {
     document.getElementById('ep-id').value = '';
     document.getElementById('ep-enabled').checked = true;
     
+    // 设置默认重置方式为每日重置
+    document.getElementById('ep-reset').value = 'daily';
+    
     // 清空完整路径显示
     const fullUrlDiv = document.getElementById('ep-full-url');
     if (fullUrlDiv) {
         fullUrlDiv.textContent = '';
+    }
+    
+    // 清空测试结果
+    const checkResult = document.getElementById('check-result');
+    if (checkResult) {
+        checkResult.style.display = 'none';
     }
     
     // 设置池ID（如果有隐藏字段）
@@ -831,14 +840,22 @@ async function handleSaveEndpoint(e) {
     e.preventDefault();
     const id = document.getElementById('ep-id').value;
     const poolId = document.getElementById('ep-pool-id').value;
+    
+    // 处理 token_limit：为空时默认为 12 个 9
+    const limitInput = document.getElementById('ep-limit').value;
+    const tokenLimit = limitInput ? parseInt(limitInput) : 999999999999;
+    
+    // 处理 reset_policy：默认为每日重置
+    const resetPolicy = document.getElementById('ep-reset').value || 'daily';
+    
     const data = {
         name: document.getElementById('ep-name').value,
         url: document.getElementById('ep-url').value,
         api_type: document.getElementById('ep-type').value,
         api_key: document.getElementById('ep-apikey').value,
-        token_limit: parseInt(document.getElementById('ep-limit').value) || 0,
+        token_limit: tokenLimit,
         timeout: parseInt(document.getElementById('ep-timeout').value) || 300,
-        reset_policy: document.getElementById('ep-reset').value,
+        reset_policy: resetPolicy,
         enabled: document.getElementById('ep-enabled').checked,
         pool_id: poolId || null
     };
