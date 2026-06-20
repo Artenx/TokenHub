@@ -1,6 +1,6 @@
 # Token Pool
 
-> LLM API 代理池管理工具 — 多端点负载均衡、Token 限额管控、自定义路由
+> LLM API 接口池管理工具 — 多端点负载均衡、Token 限额管控
 
 ## 功能特性
 
