@@ -677,12 +677,12 @@ impl AppState {
             return Some(client_model.to_string());
         }
 
-        // 不区分大小写的后缀匹配
+        // 模糊匹配，不区分大小写
         let client_lower = client_model.to_lowercase();
         for model in models {
             let model_lower = model.to_lowercase();
-            // 后缀匹配：模型名称以客户端名称结尾，或客户端名称以模型名称结尾
-            if model_lower.ends_with(&client_lower) || client_lower.ends_with(&model_lower) {
+            // 包含匹配：模型名称包含客户端名称，或客户端名称包含模型名称
+            if model_lower.contains(&client_lower) || client_lower.contains(&model_lower) {
                 return Some(model.clone());
             }
         }
@@ -697,21 +697,16 @@ impl AppState {
         endpoint: &EndpointState,
         client_model: &str,
     ) -> String {
-        // 映射模式：使用手动配置的映射关系（模糊匹配，不区分大小写）
+        // 映射模式：使用手动配置的映射关系（精确匹配）
         if pool.model_mode == ModelMode::Mapping {
-            let client_lower = client_model.to_lowercase();
-            if let Some(mapping) = endpoint.config.model_mappings.iter().find(|m| {
-                m.client_model.to_lowercase() == client_lower || 
-                m.client_model.to_lowercase().contains(&client_lower) ||
-                client_lower.contains(&m.client_model.to_lowercase())
-            }) {
+            if let Some(mapping) = endpoint.config.model_mappings.iter().find(|m| m.client_model == client_model) {
                 return mapping.endpoint_model.clone();
             }
             // 没有找到映射，返回原始名称
             return client_model.to_string();
         }
 
-        // 透传模式：自动匹配模型名称（不区分大小写，后缀匹配）
+        // 透传模式：自动匹配模型名称（模糊匹配，不区分大小写）
         // 先检查是否有缓存，如果没有则尝试获取
         if self.get_cached_models(&endpoint.config.id).is_none() {
             // 缓存未命中，返回原始名称（异步获取缓存由调用方处理）
