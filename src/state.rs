@@ -675,22 +675,25 @@ impl AppState {
         let cache = self.model_cache.read();
         let models = cache.get(endpoint_id)?;
 
-        // 首先检查是否完全一致（包括大小写），则直接返回客户端名称，无需替换
+        // 首先检查是否完全一致（包括大小写），则无需替换
         if models.iter().any(|m| m == client_model) {
             return None;
         }
 
-        // 模糊匹配，不区分大小写，返回端点模型列表中的实际名称
+        // 模糊匹配：缓存的模型名称包含客户端模型名称（不区分大小写），选择最长匹配
         let client_lower = client_model.to_lowercase();
+        let mut best_match: Option<String> = None;
         for model in models {
             let model_lower = model.to_lowercase();
-            // 包含匹配：模型名称包含客户端名称，或客户端名称包含模型名称
-            if model_lower.contains(&client_lower) || client_lower.contains(&model_lower) {
-                return Some(model.clone());
+            if model_lower.contains(&client_lower) {
+                match &best_match {
+                    Some(current) if current.len() >= model.len() => {}
+                    _ => best_match = Some(model.clone()),
+                }
             }
         }
 
-        None
+        best_match
     }
 
     /// 获取端点在指定池中匹配的模型名称
