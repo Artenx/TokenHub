@@ -60,6 +60,7 @@ impl AppState {
     }
 
     /// 获取所有可用的端点ID列表
+    #[allow(dead_code)]
     pub fn available_endpoint_ids(&self) -> Vec<String> {
         let endpoints = self.endpoints.read();
         endpoints
@@ -76,6 +77,7 @@ impl AppState {
     }
 
     /// 获取所有端点状态
+    #[allow(dead_code)]
     pub fn get_all_endpoints(&self) -> Vec<EndpointState> {
         let endpoints = self.endpoints.read();
         endpoints.values().cloned().collect()
@@ -135,41 +137,42 @@ impl AppState {
 
     /// 更新端点
     pub async fn update_endpoint(&self, id: &str, req: EndpointRequest) -> anyhow::Result<EndpointState> {
-        let mut endpoints = self.endpoints.write();
-        let ep = endpoints.get_mut(id).ok_or_else(|| anyhow::anyhow!("端点不存在: {}", id))?;
+        let state = {
+            let mut endpoints = self.endpoints.write();
+            let ep = endpoints.get_mut(id).ok_or_else(|| anyhow::anyhow!("端点不存在: {}", id))?;
 
-        ep.config.name = req.name;
-        ep.config.url = req.url;
-        ep.config.api_type = req.api_type;
-        ep.config.api_key = req.api_key;
-        ep.config.token_limit = req.token_limit;
-        ep.config.reset_policy = req.reset_policy;
-        if let Some(enabled) = req.enabled {
-            ep.config.enabled = enabled;
-        }
-        // 更新 pool_id: Some("") 表示清除，Some(非空) 表示设置，None 表示不更新
-        match req.pool_id {
-            Some(ref id) if id.is_empty() => {
-                ep.config.pool_id = None;
+            ep.config.name = req.name;
+            ep.config.url = req.url;
+            ep.config.api_type = req.api_type;
+            ep.config.api_key = req.api_key;
+            ep.config.token_limit = req.token_limit;
+            ep.config.reset_policy = req.reset_policy;
+            if let Some(enabled) = req.enabled {
+                ep.config.enabled = enabled;
             }
-            Some(_) => {
-                ep.config.pool_id = req.pool_id;
+            // 更新 pool_id: Some("") 表示清除，Some(非空) 表示设置，None 表示不更新
+            match req.pool_id {
+                Some(ref id) if id.is_empty() => {
+                    ep.config.pool_id = None;
+                }
+                Some(_) => {
+                    ep.config.pool_id = req.pool_id;
+                }
+                None => {
+                    // 不更新 pool_id
+                }
             }
-            None => {
-                // 不更新 pool_id
+            if let Some(timeout) = req.timeout {
+                ep.config.timeout = timeout;
             }
-        }
-        if let Some(timeout) = req.timeout {
-            ep.config.timeout = timeout;
-        }
-        // 更新模型映射
-        if !req.model_mappings.is_empty() {
-            ep.config.model_mappings = req.model_mappings;
-        }
-        let state = ep.clone();
+            // 更新模型映射
+            if !req.model_mappings.is_empty() {
+                ep.config.model_mappings = req.model_mappings;
+            }
+            ep.clone()
+        }; // endpoints 锁在此释放
 
-        // 更新配置（先克隆数据，释放锁后再保存）
-        drop(endpoints);
+        // 更新配置（锁已释放后再保存）
         let config_to_save = {
             let mut app_config = self.config.write();
             if let Some(ep_config) = app_config.endpoints.iter_mut().find(|e| e.id == id) {
@@ -203,13 +206,14 @@ impl AppState {
 
     /// 切换端点启用状态
     pub async fn toggle_endpoint(&self, id: &str) -> anyhow::Result<EndpointState> {
-        let mut endpoints = self.endpoints.write();
-        let ep = endpoints.get_mut(id).ok_or_else(|| anyhow::anyhow!("端点不存在: {}", id))?;
-        ep.config.enabled = !ep.config.enabled;
-        let state = ep.clone();
+        let state = {
+            let mut endpoints = self.endpoints.write();
+            let ep = endpoints.get_mut(id).ok_or_else(|| anyhow::anyhow!("端点不存在: {}", id))?;
+            ep.config.enabled = !ep.config.enabled;
+            ep.clone()
+        }; // endpoints 锁在此释放
 
-        // 更新配置（先克隆数据，释放锁后再保存）
-        drop(endpoints);
+        // 更新配置（锁已释放后再保存）
         let config_to_save = {
             let mut app_config = self.config.write();
             if let Some(ep_config) = app_config.endpoints.iter_mut().find(|e| e.id == id) {
@@ -318,6 +322,7 @@ impl AppState {
     }
 
     /// 获取所有池
+    #[allow(dead_code)]
     pub fn get_all_pools(&self) -> Vec<Pool> {
         let config = self.config.read();
         config.pools.clone()
@@ -405,18 +410,21 @@ impl AppState {
     }
 
     /// 获取对外API
+    #[allow(dead_code)]
     pub fn get_exposed_api(&self, id: &str) -> Option<ExposedApi> {
         let config = self.config.read();
         config.exposed_apis.iter().find(|a| a.id == id).cloned()
     }
 
     /// 根据前缀获取对外API
+    #[allow(dead_code)]
     pub fn get_exposed_api_by_prefix(&self, prefix: &str) -> Option<ExposedApi> {
         let config = self.config.read();
         config.exposed_apis.iter().find(|a| a.prefix == prefix && a.enabled).cloned()
     }
 
     /// 获取所有对外API
+    #[allow(dead_code)]
     pub fn get_all_exposed_apis(&self) -> Vec<ExposedApi> {
         let config = self.config.read();
         config.exposed_apis.clone()
@@ -564,6 +572,7 @@ impl AppState {
     }
 
     /// 获取池的调度算法
+    #[allow(dead_code)]
     pub fn get_pool_schedule_algorithm(&self, pool_id: &str) -> ScheduleAlgorithm {
         let config = self.config.read();
         config.pools.iter()
@@ -612,6 +621,7 @@ impl AppState {
     }
 
     /// 清除端点的模型列表缓存
+    #[allow(dead_code)]
     pub fn clear_model_cache(&self, endpoint_id: &str) {
         let mut cache = self.model_cache.write();
         cache.remove(endpoint_id);

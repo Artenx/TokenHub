@@ -37,6 +37,7 @@ impl InputValidator {
     }
 
     /// 验证 API 前缀
+    #[allow(dead_code)]
     pub fn validate_prefix(prefix: &str) -> Result<(), String> {
         if prefix.is_empty() {
             return Err("前缀不能为空".to_string());
@@ -70,6 +71,7 @@ impl InputValidator {
     }
 
     /// 验证密码强度
+    #[allow(dead_code)]
     pub fn validate_password(password: &str) -> Result<(), String> {
         if password.len() < 6 {
             return Err("密码长度不能少于6个字符".to_string());
@@ -81,6 +83,7 @@ impl InputValidator {
     }
 
     /// 验证描述文本
+    #[allow(dead_code)]
     pub fn validate_description(desc: &str) -> Result<(), String> {
         if desc.len() > 500 {
             return Err("描述长度不能超过500个字符".to_string());

@@ -107,7 +107,7 @@ pub async fn forward_request(
         let target_path = actual_path.to_string();
         
         // 根据池的模型模式处理请求体
-        let mapped_body = map_model_name(&body, &endpoint, &pool, &state).await;
+        let mapped_body = map_model_name(&body, &endpoint, &pool, state).await;
 
         match forward_to_endpoint(state, req, &mapped_body, &endpoint, &target_path, &exposed_api.api_type).await {
             Ok(response) => {

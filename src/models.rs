@@ -129,18 +129,15 @@ impl EndpointState {
 /// 模型参数传递模式
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ModelMode {
     /// 透传模式：客户端直接使用端点支持的模型名称
+    #[default]
     Passthrough,
     /// 映射模式：客户端使用统一名称，后端映射到端点实际模型
     Mapping,
 }
 
-impl Default for ModelMode {
-    fn default() -> Self {
-        ModelMode::Passthrough
-    }
-}
 
 /// 模型名称映射
 #[derive(Debug, Clone, Serialize, Deserialize)]
