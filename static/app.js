@@ -2128,6 +2128,7 @@ async function handleTestApi() {
         }
 
         let models = [];
+        let modelMappings = []; // 存储映射关系
         
         // 映射模式：从所有端点的模型映射中收集客户端模型名称
         if (pool && pool.model_mode === 'mapping') {
@@ -2137,7 +2138,10 @@ async function handleTestApi() {
                 if (epRes.ok) {
                     const fullEp = await epRes.json();
                     const mappings = fullEp.config.model_mappings || [];
-                    mappings.forEach(m => clientModels.add(m.client_model));
+                    mappings.forEach(m => {
+                        clientModels.add(m.client_model);
+                        modelMappings.push(m);
+                    });
                 }
             }
             models = Array.from(clientModels);
@@ -2176,7 +2180,8 @@ async function handleTestApi() {
                 prefix: cleanPrefix,
                 api_key: apiKey,
                 api_type: apiType,
-                base_url: baseUrl
+                base_url: baseUrl,
+                model_mappings: modelMappings
             });
             if (modelsModalFooter) {
                 modelsModalFooter.style.display = 'block';
@@ -2260,6 +2265,14 @@ async function confirmApiModelAndTest() {
         }
         const fullEp = await epRes.json();
         
+        // 根据映射关系转换模型名称
+        let testModel = selectedModel.value;
+        const modelMappings = apiData.model_mappings || [];
+        const mapping = modelMappings.find(m => m.client_model === selectedModel.value);
+        if (mapping) {
+            testModel = mapping.endpoint_model;
+        }
+        
         // 使用后端的 check 接口进行测试
         const checkRes = await fetch(`${API_BASE}/endpoints/check`, {
             method: 'POST',
@@ -2272,7 +2285,7 @@ async function confirmApiModelAndTest() {
                 token_limit: 1000,
                 reset_policy: 'manual',
                 enabled: true,
-                model: selectedModel.value
+                model: testModel
             })
         });
         const result = await checkRes.json();
@@ -2281,9 +2294,12 @@ async function confirmApiModelAndTest() {
             if (result.success) {
                 testResult.style.background = 'rgba(76, 175, 80, 0.1)';
                 testResult.style.border = '1px solid rgba(76, 175, 80, 0.3)';
+                const modelInfo = testModel !== selectedModel.value 
+                    ? `模型: ${escapeHtml(selectedModel.value)} → ${escapeHtml(testModel)}`
+                    : `模型: ${escapeHtml(selectedModel.value)}`;
                 testResult.innerHTML = `
                     <div style="color: #4caf50; font-weight: 500;">✓ 对话测试成功</div>
-                    <div style="font-size: 0.75rem; color: var(--text-tertiary); margin-top: 4px;">模型: ${escapeHtml(selectedModel.value)}</div>
+                    <div style="font-size: 0.75rem; color: var(--text-tertiary); margin-top: 4px;">${modelInfo}</div>
                     <div style="margin-top: 8px; padding: 12px; background: var(--bg-secondary); border-radius: var(--radius-sm);">
                         <div style="font-size: 0.75rem; color: var(--text-tertiary); margin-bottom: 4px;">模型回复:</div>
                         <div style="font-size: 0.875rem; color: var(--text-primary); line-height: 1.5;">${escapeHtml(result.message)}</div>
@@ -2292,9 +2308,12 @@ async function confirmApiModelAndTest() {
             } else {
                 testResult.style.background = 'rgba(244, 67, 54, 0.1)';
                 testResult.style.border = '1px solid rgba(244, 67, 54, 0.3)';
+                const modelInfo = testModel !== selectedModel.value 
+                    ? `模型: ${escapeHtml(selectedModel.value)} → ${escapeHtml(testModel)}`
+                    : `模型: ${escapeHtml(selectedModel.value)}`;
                 testResult.innerHTML = `
                     <div style="color: #f44336; font-weight: 500;">✗ 对话测试失败</div>
-                    <div style="font-size: 0.75rem; color: var(--text-tertiary); margin-top: 4px;">模型: ${escapeHtml(selectedModel.value)}</div>
+                    <div style="font-size: 0.75rem; color: var(--text-tertiary); margin-top: 4px;">${modelInfo}</div>
                     <div style="font-size: 0.8125rem; color: var(--text-secondary); margin-top: 4px;">
                         ${result.message}
                         ${result.tested_url ? `<br>测试 URL: <code style="font-size: 0.75rem; background: var(--bg-secondary); padding: 2px 4px; border-radius: 3px;">${escapeHtml(result.tested_url)}</code>` : ''}
