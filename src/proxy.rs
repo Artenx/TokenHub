@@ -7,6 +7,63 @@ use futures_util::StreamExt;
 use serde_json::Value;
 use tracing::{debug, error, warn};
 
+/// 检查单个 JSON 对象是否为错误响应（兼容三种接口类型）
+/// 返回 Some((error_code, error_message)) 如果是错误
+fn check_json_error(json: &Value) -> Option<(String, String)> {
+    // 跳过正常响应（有 choices 或 id 字段）
+    if json.get("choices").is_some() || json.get("id").is_some() {
+        return None;
+    }
+
+    // 1. OpenAI / ModelArts 格式: {"error": {"code": "...", "message": "..."}}
+    if let Some(error_obj) = json.get("error") {
+        let msg = error_obj.get("message").and_then(|m| m.as_str()).unwrap_or("未知错误").to_string();
+        let code = error_obj.get("code").map(|c| c.to_string()).unwrap_or_default();
+        return Some((code, msg));
+    }
+
+    // 2. Anthropic 格式: {"type": "error", "error": {"type": "...", "message": "..."}}
+    //    已被上面的 json.get("error") 覆盖
+
+    // 3. 顶层 code+message 格式: {"code": 429, "message": "..."}
+    if let (Some(code), Some(msg)) = (json.get("code"), json.get("message")) {
+        if code.is_number() || code.is_string() {
+            let code_str = code.to_string();
+            let msg_str = msg.as_str().unwrap_or("未知错误").to_string();
+            return Some((code_str, msg_str));
+        }
+    }
+
+    None
+}
+
+/// 检查响应体中是否包含错误（支持普通 JSON 和 SSE 格式）
+/// 返回 Some((error_code, error_message)) 如果检测到错误
+fn detect_response_error(body: &[u8]) -> Option<(String, String)> {
+    let body_str = std::str::from_utf8(body).ok()?;
+
+    // 尝试直接解析为 JSON（非流式响应）
+    if let Ok(json) = serde_json::from_str::<Value>(body_str) {
+        return check_json_error(&json);
+    }
+
+    // SSE 格式：逐行检查 data: 事件（流式响应）
+    if body_str.contains("data: ") {
+        for line in body_str.lines() {
+            let line = line.trim();
+            if let Some(json_str) = line.strip_prefix("data: ") {
+                if let Ok(json) = serde_json::from_str::<Value>(json_str) {
+                    if let Some(err) = check_json_error(&json) {
+                        return Some(err);
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// 根据模型映射转换请求体中的模型名称
 async fn map_model_name(
     body: &bytes::Bytes,
@@ -125,7 +182,10 @@ pub async fn forward_request(
         }
     }
 
-    Err(last_error.unwrap_or_else(|| AppError::Proxy("转发请求失败".to_string())))
+    if let Some(e) = &last_error {
+        warn!("端点池所有接口均不可用，最后错误: {}", e);
+    }
+    Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string()))
 }
 
 /// 处理流式响应转发
@@ -270,24 +330,14 @@ pub async fn forward_stream_request(
     };
 
     // 检查响应体中是否包含错误（LLM API 可能返回 200 但 body 中有错误）
-    if let Ok(body_str) = std::str::from_utf8(&response_body) {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(body_str) {
-            if json.get("error").is_some() {
-                let error_msg = json["error"].get("message")
-                    .and_then(|m| m.as_str())
-                    .unwrap_or("未知错误");
-                let error_code = json["error"].get("code")
-                    .map(|c| c.to_string())
-                    .unwrap_or_default();
-                warn!("端点 {} 响应中包含错误 [{}]: {}", endpoint.config.name, error_code, error_msg);
-                state.increment_endpoint_errors(&endpoint_id);
-                last_error = Some(AppError::Proxy(format!("上游错误 [{}]: {}", error_code, error_msg)));
-                if algorithm != ScheduleAlgorithm::Random {
-                    break;
-                }
-                continue;
-            }
+    if let Some((error_code, error_msg)) = detect_response_error(&response_body) {
+        warn!("端点 {} 响应中包含错误 [{}]: {}", endpoint.config.name, error_code, error_msg);
+        state.increment_endpoint_errors(&endpoint_id);
+        last_error = Some(AppError::Proxy(format!("上游错误 [{}]: {}", error_code, error_msg)));
+        if algorithm != ScheduleAlgorithm::Random {
+            break;
         }
+        continue;
     }
 
     // 解析token使用量
@@ -352,7 +402,10 @@ pub async fn forward_stream_request(
     }
 
     // 所有重试都失败
-    Err(last_error.unwrap_or_else(|| AppError::Proxy("转发请求失败".to_string())))
+    if let Some(e) = &last_error {
+        warn!("端点池所有接口均不可用，最后错误: {}", e);
+    }
+    Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string()))
 }
 
 /// 转发请求到指定端点
@@ -467,19 +520,9 @@ async fn forward_to_endpoint(
     let response_body = response.bytes().await.map_err(|e| AppError::Proxy(format!("读取响应失败: {}", e)))?;
 
     // 检查响应体中是否包含错误（LLM API 可能返回 200 但 body 中有错误）
-    if let Ok(body_str) = std::str::from_utf8(&response_body) {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(body_str) {
-            if json.get("error").is_some() {
-                let error_msg = json["error"].get("message")
-                    .and_then(|m| m.as_str())
-                    .unwrap_or("未知错误");
-                let error_code = json["error"].get("code")
-                    .map(|c| c.to_string())
-                    .unwrap_or_default();
-                error!("端点 {} 响应中包含错误 [{}]: {}", endpoint.config.name, error_code, error_msg);
-                return Err(AppError::Proxy(format!("上游错误 [{}]: {}", error_code, error_msg)));
-            }
-        }
+    if let Some((error_code, error_msg)) = detect_response_error(&response_body) {
+        error!("端点 {} 响应中包含错误 [{}]: {}", endpoint.config.name, error_code, error_msg);
+        return Err(AppError::Proxy(format!("上游错误 [{}]: {}", error_code, error_msg)));
     }
 
     // 解析token使用量
