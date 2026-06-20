@@ -2118,6 +2118,7 @@ async function handleTestApi() {
         const statsRes = await fetch(`${API_BASE}/stats`);
         const stats = await statsRes.json();
         const poolEndpoints = (stats.endpoints || []).filter(ep => ep.pool_id === poolId);
+        const pool = (stats.pools || []).find(p => p.id === poolId);
         
         if (poolEndpoints.length === 0) {
             if (modelsList) {
@@ -2126,32 +2127,52 @@ async function handleTestApi() {
             return;
         }
 
-        // 使用第一个端点获取模型列表
-        const endpoint = poolEndpoints[0];
-        const epRes = await fetch(`${API_BASE}/endpoints/${endpoint.id}`);
-        if (!epRes.ok) {
-            throw new Error('获取端点信息失败');
-        }
-        const fullEp = await epRes.json();
-
-        const modelsRes = await fetch(`${API_BASE}/endpoints/models`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                name: fullEp.config.name,
-                url: fullEp.config.url,
-                api_type: fullEp.config.api_type,
-                api_key: fullEp.config.api_key,
-                token_limit: 1000,
-                reset_policy: 'manual',
-                enabled: true
-            })
-        });
-        const modelsResult = await modelsRes.json();
+        let models = [];
         
-        if (modelsResult.success && modelsResult.models && modelsResult.models.length > 0) {
+        // 映射模式：从所有端点的模型映射中收集客户端模型名称
+        if (pool && pool.model_mode === 'mapping') {
+            const clientModels = new Set();
+            for (const ep of poolEndpoints) {
+                const epRes = await fetch(`${API_BASE}/endpoints/${ep.id}`);
+                if (epRes.ok) {
+                    const fullEp = await epRes.json();
+                    const mappings = fullEp.config.model_mappings || [];
+                    mappings.forEach(m => clientModels.add(m.client_model));
+                }
+            }
+            models = Array.from(clientModels);
+        } else {
+            // 透传模式：随机选择一个端点获取模型列表
+            const randomIndex = Math.floor(Math.random() * poolEndpoints.length);
+            const endpoint = poolEndpoints[randomIndex];
+            const epRes = await fetch(`${API_BASE}/endpoints/${endpoint.id}`);
+            if (!epRes.ok) {
+                throw new Error('获取端点信息失败');
+            }
+            const fullEp = await epRes.json();
+
+            const modelsRes = await fetch(`${API_BASE}/endpoints/models`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: fullEp.config.name,
+                    url: fullEp.config.url,
+                    api_type: fullEp.config.api_type,
+                    api_key: fullEp.config.api_key,
+                    token_limit: 1000,
+                    reset_policy: 'manual',
+                    enabled: true
+                })
+            });
+            const modelsResult = await modelsRes.json();
+            if (modelsResult.success && modelsResult.models) {
+                models = modelsResult.models.map(m => typeof m === 'object' ? m.id : m);
+            }
+        }
+        
+        if (models.length > 0) {
             // 显示模型选择列表
-            renderApiModelSelectionList(modelsResult.models, {
+            renderApiModelSelectionList(models, {
                 prefix: cleanPrefix,
                 api_key: apiKey,
                 api_type: apiType,
