@@ -31,7 +31,7 @@ impl Scheduler {
         let all_endpoints: Vec<String> = {
             let endpoints = state.endpoints.read();
             endpoints.values()
-                .filter(|ep| ep.config.pool_id.as_deref() == Some(pool_id))
+                .filter(|ep| ep.config.pool_ids.contains(&pool_id.to_string()))
                 .map(|ep| ep.config.id.clone())
                 .collect()
         };
@@ -62,7 +62,7 @@ impl Scheduler {
         let all_endpoints: Vec<String> = {
             let endpoints = state.endpoints.read();
             let mut keys: Vec<String> = endpoints.values()
-                .filter(|ep| ep.config.pool_id.as_deref() == Some(pool_id))
+                .filter(|ep| ep.config.pool_ids.contains(&pool_id.to_string()))
                 .map(|ep| ep.config.id.clone())
                 .collect();
             keys.sort();
@@ -161,7 +161,7 @@ mod tests {
             token_limit: limit,
             reset_policy: ResetPolicy::Manual,
             enabled,
-            pool_id: Some(pool_id.to_string()),
+            pool_ids: vec![pool_id.to_string()],
             timeout: 300,
             model_mappings: vec![],
         }

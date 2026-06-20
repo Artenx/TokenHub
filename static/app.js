@@ -748,7 +748,7 @@ async function editEndpoint(id, fromPool = false) {
     }
 
     // 设置池ID并更新模型映射显示
-    document.getElementById('ep-pool-id').value = ep.pool_id || '';
+    document.getElementById('ep-pool-id').value = (ep.pool_ids && ep.pool_ids.length > 0) ? ep.pool_ids[0] : '';
     updateModelMappingsVisibility(fromPool);
 
     showModal('endpoint-modal');
@@ -1038,7 +1038,7 @@ async function handleSaveEndpoint(e) {
         timeout: parseInt(document.getElementById('ep-timeout').value) || 300,
         reset_policy: resetPolicy,
         enabled: document.getElementById('ep-enabled').checked,
-        pool_id: poolId || null,
+        pool_ids: poolId ? [poolId] : [],
         model_mappings: getModelMappings()
     };
 
@@ -1196,8 +1196,8 @@ async function loadPoolsPage() {
 
 // ========== 选择端点到池功能 ==========
 
-// 从池中移除端点（不删除端点，只是清除 pool_id）
-async function removeEndpointFromPool(endpointId) {
+// 从池中移除端点（不删除端点，只是从当前池中移除）
+async function removeEndpointFromPool(endpointId, poolId) {
     if (!confirm('确定要从池中移除此端点？移除后端点仍保留在端点管理中。')) {
         return;
     }
@@ -1211,7 +1211,10 @@ async function removeEndpointFromPool(endpointId) {
         }
         const fullEndpoint = await getRes.json();
         
-        // 更新端点，清除 pool_id
+        // 从 pool_ids 中移除当前池
+        const currentPoolIds = (fullEndpoint.config.pool_ids || []).filter(id => id !== poolId);
+        
+        // 更新端点
         const res = await fetch(`${API_BASE}/endpoints/${endpointId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
@@ -1224,7 +1227,7 @@ async function removeEndpointFromPool(endpointId) {
                 timeout: fullEndpoint.config.timeout || 300,
                 reset_policy: fullEndpoint.config.reset_policy || 'manual',
                 enabled: fullEndpoint.config.enabled,
-                pool_id: ""  // 发送空字符串表示清除池关联
+                pool_ids: currentPoolIds
             })
         });
         
@@ -1251,8 +1254,8 @@ function showSelectEndpointModal(poolId, poolName) {
     const pool = currentPools.find(p => p.id === poolId);
     const isMappingMode = pool && pool.model_mode === 'mapping';
     
-    // 获取不在任何池中的端点（每个端点只能归属一个池）
-    const availableEndpoints = currentEndpoints.filter(ep => !ep.pool_id || ep.pool_id === '');
+    // 获取不在当前池中的端点（支持多池，排除已在当前池的）
+    const availableEndpoints = currentEndpoints.filter(ep => !(ep.pool_ids || []).includes(poolId));
     renderAvailableEndpointsList(availableEndpoints, isMappingMode);
     showModal('select-endpoint-modal');
 }
@@ -1406,8 +1409,9 @@ function getMappingsForEndpoint(endpointId) {
 
 // 搜索端点
 function searchEndpointsForPool(query) {
-    // 获取不在任何池中的端点（每个端点只能归属一个池）
-    const availableEndpoints = currentEndpoints.filter(ep => !ep.pool_id || ep.pool_id === '');
+    const poolId = document.getElementById('select-pool-id').value;
+    // 获取不在当前池中的端点（支持多池）
+    const availableEndpoints = currentEndpoints.filter(ep => !(ep.pool_ids || []).includes(poolId));
     
     const filtered = availableEndpoints.filter(ep => 
         ep.name.toLowerCase().includes(query.toLowerCase()) ||
@@ -1415,7 +1419,6 @@ function searchEndpointsForPool(query) {
     );
     
     // 检查池的模型模式
-    const poolId = document.getElementById('select-pool-id').value;
     const pool = currentPools.find(p => p.id === poolId);
     const isMappingMode = pool && pool.model_mode === 'mapping';
     
@@ -1462,7 +1465,11 @@ async function confirmAddEndpointsToPool() {
             // 获取该端点的模型映射配置
             const modelMappings = getMappingsForEndpoint(endpointId);
             
-            // 更新 pool_id
+            // 将当前池添加到端点的 pool_ids 中
+            const currentPoolIds = fullEndpoint.config.pool_ids || [];
+            const newPoolIds = currentPoolIds.includes(poolId) ? currentPoolIds : [...currentPoolIds, poolId];
+            
+            // 更新 pool_ids
             const res = await fetch(`${API_BASE}/endpoints/${endpointId}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -1475,7 +1482,7 @@ async function confirmAddEndpointsToPool() {
                     timeout: fullEndpoint.config.timeout || 300,
                     reset_policy: fullEndpoint.config.reset_policy || 'manual',
                     enabled: fullEndpoint.config.enabled,
-                    pool_id: poolId,
+                    pool_ids: newPoolIds,
                     model_mappings: modelMappings
                 })
             });
@@ -1807,7 +1814,7 @@ function renderPoolsList() {
 
     container.innerHTML = currentPools.map(pool => {
         // 获取该池下的端点
-        const poolEndpoints = currentEndpoints.filter(ep => ep.pool_id === pool.id);
+        const poolEndpoints = currentEndpoints.filter(ep => (ep.pool_ids || []).includes(pool.id));
         
         const endpointsHtml = poolEndpoints.length > 0 ? poolEndpoints.map(ep => {
             const statusClass = !ep.enabled ? 'disabled' : ep.tokens_remaining === 0 ? 'exhausted' : 'active';
@@ -2014,7 +2021,7 @@ async function saveEndpointMapping() {
                 timeout: fullEp.config.timeout || 300,
                 reset_policy: fullEp.config.reset_policy || 'manual',
                 enabled: fullEp.config.enabled,
-                pool_id: fullEp.config.pool_id,
+                pool_ids: fullEp.config.pool_ids || [],
                 model_mappings: mappings
             })
         });
@@ -2117,7 +2124,7 @@ async function handleTestApi() {
     try {
         const statsRes = await fetch(`${API_BASE}/stats`);
         const stats = await statsRes.json();
-        const poolEndpoints = (stats.endpoints || []).filter(ep => ep.pool_id === poolId);
+        const poolEndpoints = (stats.endpoints || []).filter(ep => (ep.pool_ids || []).includes(poolId));
         const pool = (stats.pools || []).find(p => p.id === poolId);
         
         if (poolEndpoints.length === 0) {
@@ -2248,7 +2255,7 @@ async function confirmApiModelAndTest() {
         const poolId = document.getElementById('api-pool').value;
         const statsRes = await fetch(`${API_BASE}/stats`);
         const stats = await statsRes.json();
-        const poolEndpoints = (stats.endpoints || []).filter(ep => ep.pool_id === poolId);
+        const poolEndpoints = (stats.endpoints || []).filter(ep => (ep.pool_ids || []).includes(poolId));
         
         if (poolEndpoints.length === 0) {
             if (testResult) {
@@ -2481,7 +2488,7 @@ async function updatePoolEndpointsMapping(poolId, modelMode) {
     container.style.display = 'block';
     
     // 获取池中的端点
-    const poolEndpoints = currentEndpoints.filter(ep => ep.pool_id === poolId);
+    const poolEndpoints = currentEndpoints.filter(ep => (ep.pool_ids || []).includes(poolId));
     
     if (poolEndpoints.length === 0) {
         container.innerHTML = '<p style="color: var(--text-tertiary); font-size: 0.875rem;">池中暂无端点</p>';

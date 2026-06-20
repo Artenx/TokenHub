@@ -53,7 +53,7 @@ impl AppState {
         endpoints
             .values()
             .filter(|ep| {
-                ep.is_available() && ep.config.pool_id.as_deref() == Some(pool_id)
+                ep.is_available() && ep.config.pool_ids.contains(&pool_id.to_string())
             })
             .map(|ep| ep.config.id.clone())
             .collect()
@@ -112,7 +112,7 @@ impl AppState {
             token_limit: req.token_limit,
             reset_policy: req.reset_policy,
             enabled: req.enabled.unwrap_or(true),
-            pool_id: req.pool_id,
+            pool_ids: req.pool_ids,
             timeout: req.timeout.unwrap_or(300),
             model_mappings: req.model_mappings,
         };
@@ -150,18 +150,8 @@ impl AppState {
             if let Some(enabled) = req.enabled {
                 ep.config.enabled = enabled;
             }
-            // 更新 pool_id: Some("") 表示清除，Some(非空) 表示设置，None 表示不更新
-            match req.pool_id {
-                Some(ref id) if id.is_empty() => {
-                    ep.config.pool_id = None;
-                }
-                Some(_) => {
-                    ep.config.pool_id = req.pool_id;
-                }
-                None => {
-                    // 不更新 pool_id
-                }
-            }
+            // 更新 pool_ids
+            ep.config.pool_ids = req.pool_ids;
             if let Some(timeout) = req.timeout {
                 ep.config.timeout = timeout;
             }
@@ -299,11 +289,9 @@ impl AppState {
         let config_to_save = {
             let mut config = self.config.write();
             config.pools.retain(|p| p.id != id);
-            // 清除关联的端点
+            // 清除关联的端点中的池ID
             for ep in config.endpoints.iter_mut() {
-                if ep.pool_id.as_deref() == Some(id) {
-                    ep.pool_id = None;
-                }
+                ep.pool_ids.retain(|pid| pid != id);
             }
             // 清除关联的对外API
             config.exposed_apis.retain(|a| a.pool_id != id);
@@ -469,7 +457,7 @@ impl AppState {
                 last_used: ep.last_used,
                 total_requests: ep.total_requests,
                 error_count: ep.error_count,
-                pool_id: ep.config.pool_id.clone(),
+                pool_ids: ep.config.pool_ids.clone(),
                 timeout: ep.config.timeout,
                 reset_policy: ep.config.reset_policy.clone(),
                 model_mappings: ep.config.model_mappings.clone(),
@@ -478,7 +466,7 @@ impl AppState {
 
         let pool_infos: Vec<PoolInfo> = config.pools.iter().map(|pool| {
             let pool_endpoints: Vec<_> = endpoints.values()
-                .filter(|ep| ep.config.pool_id.as_deref() == Some(&pool.id))
+                .filter(|ep| ep.config.pool_ids.contains(&pool.id))
                 .collect();
             let active_in_pool = pool_endpoints.iter().filter(|ep| ep.is_available()).count();
             let tokens_in_pool: u64 = pool_endpoints.iter().map(|ep| ep.tokens_used).sum();
@@ -503,7 +491,7 @@ impl AppState {
                 .find(|p| p.id == api.pool_id)
                 .map(|p| p.name.clone());
             let ep_count = endpoints.values()
-                .filter(|ep| ep.config.pool_id.as_deref() == Some(&api.pool_id))
+                .filter(|ep| ep.config.pool_ids.contains(&api.pool_id))
                 .count();
 
             ExposedApiInfo {

@@ -64,8 +64,9 @@ pub struct EndpointConfig {
     pub token_limit: u64,
     pub reset_policy: ResetPolicy,
     pub enabled: bool,
-    /// 所属池ID
-    pub pool_id: Option<String>,
+    /// 所属池ID列表（支持多池）
+    #[serde(default)]
+    pub pool_ids: Vec<String>,
     /// 超时时间（秒）
     #[serde(default = "default_timeout")]
     pub timeout: u64,
@@ -224,7 +225,9 @@ pub struct EndpointRequest {
     pub token_limit: u64,
     pub reset_policy: ResetPolicy,
     pub enabled: Option<bool>,
-    pub pool_id: Option<String>,
+    /// 所属池ID列表（支持多池）
+    #[serde(default)]
+    pub pool_ids: Vec<String>,
     pub timeout: Option<u64>,
     /// 测试时指定的模型名称（可选）
     #[serde(default)]
@@ -290,7 +293,8 @@ pub struct EndpointStats {
     pub last_used: Option<DateTime<Utc>>,
     pub total_requests: u64,
     pub error_count: u32,
-    pub pool_id: Option<String>,
+    /// 所属池ID列表（支持多池）
+    pub pool_ids: Vec<String>,
     pub timeout: u64,
     pub reset_policy: ResetPolicy,
     pub model_mappings: Vec<ModelMapping>,
