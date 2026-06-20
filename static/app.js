@@ -184,8 +184,8 @@ function initEventListeners() {
     if (epLimit && epReset) {
         const updateResetPolicy = () => {
             if (!epLimit.value || epLimit.value === '0') {
-                // 限额为空时，固定为每日重置并禁用
-                epReset.value = 'daily';
+                // 限额为空时，固定为手动重置并禁用
+                epReset.value = 'manual';
                 epReset.disabled = true;
                 if (epResetHint) epResetHint.style.display = 'block';
             } else {
@@ -614,7 +614,7 @@ function renderEndpointsList() {
                         <span>${ep.api_type.toUpperCase()}</span>
                     </div>
                     <div class="endpoint-detail">
-                        <label>今日已用</label>
+                        <label>已使用</label>
                         <span>${formatNumber(ep.tokens_used)}</span>
                     </div>
                     <div class="endpoint-detail">
@@ -691,10 +691,10 @@ async function editEndpoint(id, fromPool = false) {
     // 更新完整路径显示
     updateEndpointFullUrl();
     
-    // 设置重置方式（无限制时强制为每日重置）
+    // 设置重置方式（无限制时强制为手动重置）
     const isUnlimited = ep.token_limit >= 999999999000 || ep.token_limit === 0;
     if (isUnlimited) {
-        document.getElementById('ep-reset').value = 'daily';
+        document.getElementById('ep-reset').value = 'manual';
     } else {
         document.getElementById('ep-reset').value = ep.reset_policy || 'manual';
     }
