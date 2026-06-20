@@ -471,6 +471,7 @@ impl AppState {
                 error_count: ep.error_count,
                 pool_id: ep.config.pool_id.clone(),
                 timeout: ep.config.timeout,
+                reset_policy: ep.config.reset_policy.clone(),
                 model_mappings: ep.config.model_mappings.clone(),
             })
             .collect();

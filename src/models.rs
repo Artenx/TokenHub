@@ -292,6 +292,7 @@ pub struct EndpointStats {
     pub error_count: u32,
     pub pool_id: Option<String>,
     pub timeout: u64,
+    pub reset_policy: ResetPolicy,
     pub model_mappings: Vec<ModelMapping>,
 }
 
