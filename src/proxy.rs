@@ -233,7 +233,6 @@ pub async fn forward_stream_request(
 
         // 计算实际路径
         let actual_path = path.strip_prefix(&exposed_api.prefix).unwrap_or(path);
-        // build_target_url 会自动补全 /v1，这里不再重复添加
         let target_path = actual_path.to_string();
         let target_url = build_target_url(&endpoint.config.url, &target_path, &exposed_api.api_type);
         
@@ -248,157 +247,157 @@ pub async fn forward_stream_request(
             &target_url,
         );
 
-    // 复制请求头（跳过认证头，后面会使用端点的 API Key）
-    for (key, value) in req.headers() {
-        let key_str = key.as_str().to_lowercase();
-        if key_str != "host" && key_str != "content-length" && key_str != "authorization" && key_str != "x-api-key" {
-            if let Ok(v) = value.to_str() {
-                request_builder = request_builder.header(key.as_str(), v);
+        // 复制请求头（跳过认证头，后面会使用端点的 API Key）
+        for (key, value) in req.headers() {
+            let key_str = key.as_str().to_lowercase();
+            if key_str != "host" && key_str != "content-length" && key_str != "authorization" && key_str != "x-api-key" {
+                if let Ok(v) = value.to_str() {
+                    request_builder = request_builder.header(key.as_str(), v);
+                }
             }
         }
-    }
 
-    // 设置认证头
-    match endpoint.config.api_type {
-        ApiType::OpenAI | ApiType::OpenAIResponses => {
-            request_builder = request_builder.header(
-                "Authorization",
-                format!("Bearer {}", endpoint.config.api_key),
-            );
+        // 设置认证头
+        match endpoint.config.api_type {
+            ApiType::OpenAI | ApiType::OpenAIResponses => {
+                request_builder = request_builder.header(
+                    "Authorization",
+                    format!("Bearer {}", endpoint.config.api_key),
+                );
+            }
+            ApiType::Anthropic => {
+                request_builder = request_builder.header("x-api-key", &endpoint.config.api_key);
+                request_builder = request_builder.header("anthropic-version", "2023-06-01");
+            }
         }
-        ApiType::Anthropic => {
-            request_builder = request_builder.header("x-api-key", &endpoint.config.api_key);
-            request_builder = request_builder.header("anthropic-version", "2023-06-01");
-        }
-    }
 
-    request_builder = request_builder.body(mapped_body.to_vec());
+        request_builder = request_builder.body(mapped_body.to_vec());
 
-    // 发送请求，捕获网络异常（超时、连接拒绝、DNS失败等）
-    let response = match request_builder.send().await {
-        Ok(resp) => resp,
-        Err(e) => {
-            let error_msg = if e.is_timeout() {
-                format!("连接超时: {}", e)
-            } else if e.is_connect() {
-                format!("连接失败: {}", e)
-            } else if e.is_request() {
-                format!("请求错误: {}", e)
-            } else {
-                format!("网络异常: {}", e)
-            };
-            warn!("端点 {} 请求异常: {}", endpoint.config.name, error_msg);
+        // 发送请求，捕获网络异常（超时、连接拒绝、DNS失败等）
+        let response = match request_builder.send().await {
+            Ok(resp) => resp,
+            Err(e) => {
+                let error_msg = if e.is_timeout() {
+                    format!("连接超时: {}", e)
+                } else if e.is_connect() {
+                    format!("连接失败: {}", e)
+                } else if e.is_request() {
+                    format!("请求错误: {}", e)
+                } else {
+                    format!("网络异常: {}", e)
+                };
+                warn!("端点 {} 请求异常: {}", endpoint.config.name, error_msg);
+                state.increment_endpoint_errors(&endpoint_id);
+                last_error = Some(AppError::Proxy(error_msg));
+
+                if algorithm != ScheduleAlgorithm::Random {
+                    break;
+                }
+                continue;
+            }
+        };
+
+        let resp_status = response.status();
+        if resp_status != 200 {
+            let error_body = response.text().await.unwrap_or_default();
+            warn!("端点 {} 返回错误状态 {}: {}", endpoint.config.name, resp_status, error_body);
             state.increment_endpoint_errors(&endpoint_id);
-            last_error = Some(AppError::Proxy(error_msg));
+            last_error = Some(AppError::Proxy(format!(
+                "上游返回状态 {}: {}",
+                resp_status, error_body
+            )));
 
             if algorithm != ScheduleAlgorithm::Random {
                 break;
             }
             continue;
         }
-    };
 
-    let resp_status = response.status();
-    if resp_status != 200 {
-        let error_body = response.text().await.unwrap_or_default();
-        warn!("端点 {} 返回错误状态 {}: {}", endpoint.config.name, resp_status, error_body);
-        state.increment_endpoint_errors(&endpoint_id);
-        last_error = Some(AppError::Proxy(format!(
-            "上游返回状态 {}: {}",
-            resp_status, error_body
-        )));
+        // 先读取完整响应体，检查是否有错误（流式响应中错误可能在 body 中而非状态码）
+        let resp_headers = response.headers().clone();
+        let response_body = match response.bytes().await {
+            Ok(b) => b,
+            Err(e) => {
+                warn!("端点 {} 读取响应失败: {}", endpoint.config.name, e);
+                state.increment_endpoint_errors(&endpoint_id);
+                last_error = Some(AppError::Proxy(format!("读取响应失败: {}", e)));
+                if algorithm != ScheduleAlgorithm::Random {
+                    break;
+                }
+                continue;
+            }
+        };
 
-        if algorithm != ScheduleAlgorithm::Random {
-            break;
-        }
-        continue;
-    }
-
-    // 先读取完整响应体，检查是否有错误（流式响应中错误可能在 body 中而非状态码）
-    let resp_headers = response.headers().clone();
-    let response_body = match response.bytes().await {
-        Ok(b) => b,
-        Err(e) => {
-            warn!("端点 {} 读取响应失败: {}", endpoint.config.name, e);
+        // 检查响应体中是否包含错误（LLM API 可能返回 200 但 body 中有错误）
+        if let Some((error_code, error_msg)) = detect_response_error(&response_body) {
+            warn!("端点 {} 响应中包含错误 [{}]: {}", endpoint.config.name, error_code, error_msg);
             state.increment_endpoint_errors(&endpoint_id);
-            last_error = Some(AppError::Proxy(format!("读取响应失败: {}", e)));
+            last_error = Some(AppError::Proxy(format!("上游错误 [{}]: {}", error_code, error_msg)));
             if algorithm != ScheduleAlgorithm::Random {
                 break;
             }
             continue;
         }
-    };
 
-    // 检查响应体中是否包含错误（LLM API 可能返回 200 但 body 中有错误）
-    if let Some((error_code, error_msg)) = detect_response_error(&response_body) {
-        warn!("端点 {} 响应中包含错误 [{}]: {}", endpoint.config.name, error_code, error_msg);
-        state.increment_endpoint_errors(&endpoint_id);
-        last_error = Some(AppError::Proxy(format!("上游错误 [{}]: {}", error_code, error_msg)));
-        if algorithm != ScheduleAlgorithm::Random {
-            break;
+        // 解析token使用量
+        let tokens_used = parse_token_usage(&response_body, &endpoint.config.api_type);
+        if tokens_used > 0 {
+            state.update_endpoint_tokens(&endpoint.config.id, tokens_used);
         }
-        continue;
-    }
 
-    // 解析token使用量
-    let tokens_used = parse_token_usage(&response_body, &endpoint.config.api_type);
-    if tokens_used > 0 {
-        state.update_endpoint_tokens(&endpoint.config.id, tokens_used);
-    }
+        // 检查客户端是否要求流式响应
+        let body_str = std::str::from_utf8(&body).unwrap_or("");
+        let is_stream = body_str.contains("\"stream\":true") || body_str.contains("\"stream\": true");
 
-    // 检查客户端是否要求流式响应
-    let body_str = std::str::from_utf8(&body).unwrap_or("");
-    let is_stream = body_str.contains("\"stream\":true") || body_str.contains("\"stream\": true");
+        if is_stream {
+            // 流式转发
+            let ep_id = endpoint.config.id.clone();
+            let ep_api_type = endpoint.config.api_type.clone();
+            let state_clone = state.clone();
 
-    if is_stream {
-        // 流式转发
-        let ep_id = endpoint.config.id.clone();
-        let ep_api_type = endpoint.config.api_type.clone();
-        let state_clone = state.clone();
-
-        let body_stream = actix_web::HttpResponse::Ok()
-            .content_type("text/event-stream")
-            .insert_header(("Cache-Control", "no-cache"))
-            .insert_header(("Connection", "keep-alive"))
-            .streaming({
-                let mut buffer = String::new();
-                let chunks = vec![Ok::<_, std::io::Error>(response_body)];
-                futures_util::stream::iter(chunks).map(move |chunk| {
-                    if let Ok(data) = &chunk {
-                        if let Ok(text) = std::str::from_utf8(data) {
-                            buffer.push_str(text);
-                            while let Some(line_end) = buffer.find('\n') {
-                                let line = buffer[..line_end].trim().to_string();
-                                buffer = buffer[line_end + 1..].to_string();
-                                if line.starts_with("data: ") && !line.contains("[DONE]") {
-                                    let json_str = &line[6..];
-                                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
-                                        if json.get("usage").is_some() {
-                                            let tokens = parse_token_usage(json_str.as_bytes(), &ep_api_type);
-                                            if tokens > 0 {
-                                                state_clone.update_endpoint_tokens(&ep_id, tokens);
+            let body_stream = actix_web::HttpResponse::Ok()
+                .content_type("text/event-stream")
+                .insert_header(("Cache-Control", "no-cache"))
+                .insert_header(("Connection", "keep-alive"))
+                .streaming({
+                    let mut buffer = String::new();
+                    let chunks = vec![Ok::<_, std::io::Error>(response_body)];
+                    futures_util::stream::iter(chunks).map(move |chunk| {
+                        if let Ok(data) = &chunk {
+                            if let Ok(text) = std::str::from_utf8(data) {
+                                buffer.push_str(text);
+                                while let Some(line_end) = buffer.find('\n') {
+                                    let line = buffer[..line_end].trim().to_string();
+                                    buffer = buffer[line_end + 1..].to_string();
+                                    if line.starts_with("data: ") && !line.contains("[DONE]") {
+                                        let json_str = &line[6..];
+                                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
+                                            if json.get("usage").is_some() {
+                                                let tokens = parse_token_usage(json_str.as_bytes(), &ep_api_type);
+                                                if tokens > 0 {
+                                                    state_clone.update_endpoint_tokens(&ep_id, tokens);
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
-                    chunk
-                })
-            });
+                        chunk
+                    })
+                });
 
-        return Ok(body_stream);
-    } else {
-        // 非流式响应
-        let mut response_builder = HttpResponse::build(actix_web::http::StatusCode::OK);
-        for (key, value) in &resp_headers {
-            if let Ok(v) = value.to_str() {
-                response_builder.insert_header((key.as_str(), v));
+            return Ok(body_stream);
+        } else {
+            // 非流式响应
+            let mut response_builder = HttpResponse::build(actix_web::http::StatusCode::OK);
+            for (key, value) in &resp_headers {
+                if let Ok(v) = value.to_str() {
+                    response_builder.insert_header((key.as_str(), v));
+                }
             }
+            return Ok(response_builder.body(response_body));
         }
-        return Ok(response_builder.body(response_body));
-    }
     }
 
     // 所有重试都失败
