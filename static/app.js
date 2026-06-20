@@ -2622,8 +2622,8 @@ function formatNumber(num) {
 
 // 格式化限额数字（接近12个9时直接显示）
 function formatLimit(num) {
-    // 大于 999999999000 时都显示为 999999999999
-    if (num >= 999999999000) return '999999999999';
+    // 大于 999999999000 时显示为无上限
+    if (num >= 999999999000) return '无上限';
     return formatNumber(num);
 }
 

@@ -4,12 +4,15 @@
 
 ## 功能特性
 
-- 多端点代理池管理
-- 三种调度算法（轮询/轮换/随机）
-- 支持 OpenAI / Anthropic / OpenAI Responses 接口类型
-- Token 限额管理与实时统计
-- 自定义 API 前缀路由
-- Web 管理后台
+- **多端点代理池管理** - 端点可分配到不同池，支持透传模式和映射模式
+- **三种调度算法** - 轮询、轮换、随机（随机模式支持自动故障转移重试）
+- **模型名称管理** - 透传模式自动模糊匹配模型名称，映射模式手动配置映射关系
+- **端点模型缓存** - 自动获取并缓存端点支持的模型列表
+- **Token 限额管理** - 支持无上限、手动重置、每日零点自动重置
+- **接口管理** - 自定义 API 前缀路由，支持独立认证密钥
+- **对话测试** - 端点和接口均支持在线对话测试
+- **异常处理** - 区分超时、连接失败、请求错误，随机模式自动重试其他端点
+- **Web 管理后台** - 端点管理、池管理、接口管理、设置
 
 ## 快速部署
 
@@ -112,13 +115,13 @@ curl http://localhost:8080/health
 |------|------|
 | 管理后台 | `http://your-ip:8080/admin/` |
 | 默认密码 | `admin123` |
-| API 端点 | `http://your-ip:8080/v1/chat/completions` |
+| API 端点 | `http://your-ip:8080/{prefix}/chat/completions` |
 
 ## 使用示例
 
 ```bash
-# 调用 API
-curl http://your-ip:8080/v1/chat/completions \
+# 通过接口管理的前缀调用 API
+curl http://your-ip:8080/your-prefix/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your-api-key" \
   -d '{

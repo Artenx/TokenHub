@@ -250,7 +250,7 @@
                     <div class="form-group">
                         <label>Token 限额</label>
                         <input type="number" id="ep-limit" placeholder="100000">
-                        <small>置空则为 Token 无上限，重置方式自动设为手动重置，使用量自动循环清零。</small>
+                        <small>置空则为 Token 无上限，重置方式自动设为手动重置。</small>
                     </div>
                     <div class="form-group">
                         <label>超时时间（秒）</label>
@@ -263,7 +263,7 @@
                             <option value="manual">手动重置</option>
                             <option value="daily">零点自动重置</option>
                         </select>
-                        <small id="ep-reset-hint" style="display:none;">Token无上限端点，已使用达到999999999999时自动清零</small>
+                        <small id="ep-reset-hint" style="display:none;">Token无上限端点，无需设置重置方式</small>
                     </div>
                     <div class="form-group">
                         <label>
