@@ -680,20 +680,21 @@ impl AppState {
             return None;
         }
 
-        // 模糊匹配：缓存的模型名称包含客户端模型名称（不区分大小写），选择最长匹配
+        // 模糊匹配：缓存的模型名称包含客户端模型名称（不区分大小写）
         let client_lower = client_model.to_lowercase();
-        let mut best_match: Option<String> = None;
-        for model in models {
-            let model_lower = model.to_lowercase();
-            if model_lower.contains(&client_lower) {
-                match &best_match {
-                    Some(current) if current.len() >= model.len() => {}
-                    _ => best_match = Some(model.clone()),
-                }
+        let matches: Vec<&String> = models.iter()
+            .filter(|m| m.to_lowercase().contains(&client_lower))
+            .collect();
+
+        match matches.len() {
+            0 => None,
+            1 => Some(matches[0].clone()),
+            _ => {
+                // 匹配到多个模型，返回错误信息
+                warn!("模型 '{}' 匹配到多个模型: {:?}", client_model, matches);
+                Some(format!("ERROR:模型名称参数有误，匹配到多个模型，请修改后重试"))
             }
         }
-
-        best_match
     }
 
     /// 获取端点在指定池中匹配的模型名称

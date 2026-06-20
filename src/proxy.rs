@@ -13,16 +13,16 @@ async fn map_model_name(
     endpoint: &EndpointState,
     pool: &Pool,
     state: &AppState,
-) -> bytes::Bytes {
+) -> Result<bytes::Bytes, AppError> {
     // 解析请求体
     let Ok(mut json) = serde_json::from_slice::<Value>(body) else {
-        return body.clone();
+        return Ok(body.clone());
     };
     
     // 获取客户端请求的模型名称
     let client_model = json.get("model").and_then(|m| m.as_str()).unwrap_or("").to_string();
     if client_model.is_empty() {
-        return body.clone();
+        return Ok(body.clone());
     }
     
     // 检查是否有缓存，如果没有则尝试获取
@@ -35,17 +35,22 @@ async fn map_model_name(
     
     // 如果模型名称发生变化，替换请求体
     if resolved_model != client_model {
+        // 检查是否是错误信息
+        if resolved_model.starts_with("ERROR:") {
+            let error_msg = &resolved_model[6..];
+            return Err(AppError::BadRequest(error_msg.to_string()));
+        }
         if let Some(obj) = json.as_object_mut() {
             obj.insert("model".to_string(), Value::String(resolved_model.clone()));
             debug!("模型映射: {} -> {}", client_model, resolved_model);
             // 重新序列化
             if let Ok(new_body) = serde_json::to_vec(&json) {
-                return bytes::Bytes::from(new_body);
+                return Ok(bytes::Bytes::from(new_body));
             }
         }
     }
     
-    body.clone()
+    Ok(body.clone())
 }
 
 /// 处理API请求转发（基于对外API和池）
@@ -102,7 +107,7 @@ pub async fn forward_request(
         let target_path = actual_path.to_string();
         
         // 根据池的模型模式处理请求体
-        let mapped_body = map_model_name(&body, &endpoint, &pool, state).await;
+        let mapped_body = map_model_name(&body, &endpoint, &pool, state).await?;
 
         match forward_to_endpoint(state, req, &mapped_body, &endpoint, &target_path, &exposed_api.api_type).await {
             Ok(response) => {
@@ -173,7 +178,7 @@ pub async fn forward_stream_request(
         let target_url = build_target_url(&endpoint.config.url, &target_path, &exposed_api.api_type);
         
         // 根据池的模型模式处理请求体
-        let mapped_body = map_model_name(&body, &endpoint, &pool, state.get_ref()).await;
+        let mapped_body = map_model_name(&body, &endpoint, &pool, state.get_ref()).await?;
 
         debug!("流式转发到: {} (尝试 {}/{})", target_url, attempt + 1, max_retries);
 
