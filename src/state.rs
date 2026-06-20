@@ -675,12 +675,12 @@ impl AppState {
         let cache = self.model_cache.read();
         let models = cache.get(endpoint_id)?;
 
-        // 首先检查是否完全一致（包括大小写）
+        // 首先检查是否完全一致（包括大小写），则直接返回客户端名称，无需替换
         if models.iter().any(|m| m == client_model) {
-            return Some(client_model.to_string());
+            return None;
         }
 
-        // 模糊匹配，不区分大小写
+        // 模糊匹配，不区分大小写，返回端点模型列表中的实际名称
         let client_lower = client_model.to_lowercase();
         for model in models {
             let model_lower = model.to_lowercase();
@@ -716,12 +716,8 @@ impl AppState {
             return client_model.to_string();
         }
 
-        // 尝试从缓存中匹配
-        if let Some(matched) = self.match_model_name(&endpoint.config.id, client_model) {
-            return matched;
-        }
-
-        // 如果没有匹配到，返回原始名称
-        client_model.to_string()
+        // 尝试从缓存中匹配，返回端点模型列表中的实际名称
+        self.match_model_name(&endpoint.config.id, client_model)
+            .unwrap_or_else(|| client_model.to_string())
     }
 }
