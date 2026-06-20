@@ -2203,13 +2203,19 @@ function renderApiModelSelectionList(models, apiData) {
     const container = document.getElementById('models-list');
     if (!container) return;
     
-    container.innerHTML = models.map((m, index) => `
-        <div style="display: flex; align-items: center; padding: 10px 12px; background: var(--bg-tertiary); border-radius: var(--radius-sm); margin-bottom: 6px; cursor: pointer;" onclick="this.querySelector('input').checked = true;">
-            <input type="radio" name="selected-model" value="${escapeAttr(m.id)}" ${index === 0 ? 'checked' : ''} style="margin-right: 12px;">
-            <span style="flex: 1; font-family: var(--font-mono); font-size: 0.8125rem;">${escapeHtml(m.id)}</span>
-            ${m.owned_by ? `<span style="font-size: 0.75rem; color: var(--text-tertiary);">${escapeHtml(m.owned_by)}</span>` : ''}
-        </div>
-    `).join('');
+    container.innerHTML = models.map((m, index) => {
+        // 处理字符串数组（映射模式）和对象数组（透传模式）
+        const modelId = typeof m === 'object' ? m.id : m;
+        const ownedBy = typeof m === 'object' ? m.owned_by : null;
+        
+        return `
+            <div style="display: flex; align-items: center; padding: 10px 12px; background: var(--bg-tertiary); border-radius: var(--radius-sm); margin-bottom: 6px; cursor: pointer;" onclick="this.querySelector('input').checked = true;">
+                <input type="radio" name="selected-model" value="${escapeAttr(modelId)}" ${index === 0 ? 'checked' : ''} style="margin-right: 12px;">
+                <span style="flex: 1; font-family: var(--font-mono); font-size: 0.8125rem;">${escapeHtml(modelId)}</span>
+                ${ownedBy ? `<span style="font-size: 0.75rem; color: var(--text-tertiary);">${escapeHtml(ownedBy)}</span>` : ''}
+            </div>
+        `;
+    }).join('');
     
     container.dataset.apiData = JSON.stringify(apiData);
 }
