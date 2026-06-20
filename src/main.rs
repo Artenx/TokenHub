@@ -11,6 +11,7 @@ mod validator;
 use actix_cors::Cors;
 use actix_files as fs;
 use actix_web::{web, App, HttpServer, HttpRequest, HttpResponse, middleware};
+use actix_web::web::PayloadConfig;
 use state::AppState;
 use tracing::info;
 use tracing_subscriber::{fmt, EnvFilter};
@@ -122,6 +123,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .wrap(cors)
             .wrap(middleware::Logger::default())
+            .app_data(PayloadConfig::new(50 * 1024 * 1024)) // 50MB 请求体限制
             .app_data(state_data.clone())
             // 健康检查
             .route("/health", web::get().to(health_check))
