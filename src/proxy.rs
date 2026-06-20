@@ -306,6 +306,11 @@ fn build_target_url(base_url: &str, path: &str, api_type: &ApiType) -> String {
     let base = base_url.trim_end_matches('/');
     let path = path.trim_start_matches('/');
     
+    // 如果路径已经包含 /v1 前缀，则直接拼接 base 和 path
+    if path.starts_with("v1/") || path.starts_with("v1") {
+        return format!("{}/{}", base, path);
+    }
+    
     // 如果 base_url 已经包含 /v1 等路径前缀，则直接使用
     // 否则根据 API 类型自动补全
     let full_base = if base.ends_with("/v1") || base.ends_with("/v1/") {
