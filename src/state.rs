@@ -423,9 +423,9 @@ impl AppState {
         let config = self.config.read();
 
         let active_count = endpoints.values().filter(|ep| ep.is_available()).count();
-        // 排除无限制（token_limit == 0）的端点
+        // 排除无限制（token_limit == 0 或 >= 999999999000）的端点
         let limited_endpoints: Vec<_> = endpoints.values()
-            .filter(|ep| ep.config.token_limit != 0)
+            .filter(|ep| ep.config.token_limit > 0 && ep.config.token_limit < 999999999000)
             .collect();
         let total_tokens_used: u64 = limited_endpoints.iter().map(|ep| ep.tokens_used).sum();
         let total_tokens_limit: u64 = limited_endpoints.iter().map(|ep| ep.config.token_limit).sum();
