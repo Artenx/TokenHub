@@ -425,7 +425,7 @@ pub async fn forward_stream_request(
                 state.increment_endpoint_errors(&endpoint_id);
                 last_error = Some(AppError::Proxy(error_msg));
 
-                if retry_mode != RetryMode::None {
+                if retry_mode == RetryMode::None {
                     break;
                 }
                 continue;
@@ -442,7 +442,7 @@ pub async fn forward_stream_request(
                 resp_status, error_body
             )));
 
-            if retry_mode != RetryMode::None {
+            if retry_mode == RetryMode::None {
                 break;
             }
             continue;
@@ -458,7 +458,7 @@ pub async fn forward_stream_request(
                 warn!("端点 {} 读取响应流失败: {}", endpoint.config.name, e);
                 state.increment_endpoint_errors(&endpoint_id);
                 last_error = Some(AppError::Proxy(format!("读取响应流失败: {}", e)));
-                if retry_mode != RetryMode::None {
+                if retry_mode == RetryMode::None {
                     break;
                 }
                 continue;
@@ -467,7 +467,7 @@ pub async fn forward_stream_request(
                 warn!("端点 {} 返回空响应", endpoint.config.name);
                 state.increment_endpoint_errors(&endpoint_id);
                 last_error = Some(AppError::Proxy("上游返回空响应".to_string()));
-                if retry_mode != RetryMode::None {
+                if retry_mode == RetryMode::None {
                     break;
                 }
                 continue;
@@ -479,7 +479,7 @@ pub async fn forward_stream_request(
             warn!("端点 {} 响应中包含错误 [{}]: {}", endpoint.config.name, error_code, error_msg);
             state.increment_endpoint_errors(&endpoint_id);
             last_error = Some(AppError::Proxy(format!("上游错误 [{}]: {}", error_code, error_msg)));
-            if retry_mode != RetryMode::None {
+            if retry_mode == RetryMode::None {
                 break;
             }
             continue;
