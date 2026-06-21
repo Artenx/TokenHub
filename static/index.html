@@ -433,10 +433,10 @@
                                 <small><strong style="color: var(--success);">无重试</strong> - 异常直接返回错误，不进行重试。</small>
                             </div>
                             <div class="retry-mode-item" data-mode="same" style="display: none;">
-                                <small><strong style="color: var(--success);">原地重试</strong> - 异常时继续向原端点发送请求，直到达到重试次数。</small>
+                                <small><strong style="color: var(--success);">原地重试</strong> - 异常时继续向原端点发送请求，直到达到设置的重试次数。</small>
                             </div>
                             <div class="retry-mode-item" data-mode="pool" style="display: none;">
-                                <small><strong style="color: var(--success);">端点重试</strong> - 异常时切换到池内其他端点，每个端点依次尝试。</small>
+                                <small><strong style="color: var(--success);">端点重试</strong> - 异常时切换到池内其他端点，每个端点依次尝试，直到达到设置的重试次数。</small>
                             </div>
                         </div>
                     </div>
