@@ -31,9 +31,9 @@
                     </div>
                     <h1>Token Pool</h1>
                     <p class="subtitle">让Token自由更近一步</p>
-                    <form id="login-form">
+                    <form id="login-form" aria-label="登录表单">
                         <div class="form-group">
-                            <input type="password" id="login-password" placeholder="输入管理密码" required>
+                            <input type="password" id="login-password" placeholder="输入管理密码" required aria-label="管理密码">
                         </div>
                         <button type="submit" class="btn btn-primary" style="width:100%">登录</button>
                     </form>
@@ -54,12 +54,12 @@
                 </div>
             </header>
 
-            <nav>
-                <button class="nav-btn active" data-tab="dashboard">概览</button>
-                <button class="nav-btn" data-tab="endpoint-mgmt">端点管理</button>
-                <button class="nav-btn" data-tab="pools">池管理</button>
-                <button class="nav-btn" data-tab="api-mgmt">接口管理</button>
-                <button class="nav-btn" data-tab="settings">设置</button>
+            <nav role="navigation" aria-label="主导航">
+                <button class="nav-btn active" data-tab="dashboard" role="tab" aria-selected="true" aria-controls="tab-dashboard">概览</button>
+                <button class="nav-btn" data-tab="endpoint-mgmt" role="tab" aria-selected="false" aria-controls="tab-endpoint-mgmt">端点管理</button>
+                <button class="nav-btn" data-tab="pools" role="tab" aria-selected="false" aria-controls="tab-pools">池管理</button>
+                <button class="nav-btn" data-tab="api-mgmt" role="tab" aria-selected="false" aria-controls="tab-api-mgmt">接口管理</button>
+                <button class="nav-btn" data-tab="settings" role="tab" aria-selected="false" aria-controls="tab-settings">设置</button>
             </nav>
 
             <!-- 仪表盘 -->
@@ -196,7 +196,7 @@
         </div>
 
         <!-- 选择端点到池模态框 -->
-        <div id="select-endpoint-modal" class="modal" style="display:none">
+        <div id="select-endpoint-modal" class="modal" style="display:none" role="dialog" aria-modal="true">
             <div class="modal-content" style="max-width: 600px;">
                 <div class="modal-header">
                     <h2 id="select-endpoint-title">选择端点到池</h2>
@@ -215,7 +215,7 @@
         </div>
 
         <!-- 端点模态框 -->
-        <div id="endpoint-modal" class="modal" style="display:none">
+        <div id="endpoint-modal" class="modal" style="display:none" role="dialog" aria-modal="true">
             <div class="modal-content">
                 <div class="modal-header">
                     <h2 id="modal-title">添加端点</h2>
@@ -289,7 +289,7 @@
         </div>
 
         <!-- 密码模态框 -->
-        <div id="password-modal" class="modal" style="display:none">
+        <div id="password-modal" class="modal" style="display:none" role="dialog" aria-modal="true">
             <div class="modal-content">
                 <div class="modal-header">
                     <h2>修改密码</h2>
@@ -317,7 +317,7 @@
         </div>
 
         <!-- 对外API模态框 -->
-        <div id="api-modal" class="modal" style="display:none">
+        <div id="api-modal" class="modal" style="display:none" role="dialog" aria-modal="true">
             <div class="modal-content">
                 <div class="modal-header">
                     <h2 id="api-modal-title">添加对外接口</h2>
@@ -371,7 +371,7 @@
         </div>
 
         <!-- 端点池模态框 -->
-        <div id="pool-modal" class="modal" style="display:none">
+        <div id="pool-modal" class="modal" style="display:none" role="dialog" aria-modal="true">
             <div class="modal-content">
                 <div class="modal-header">
                     <h2 id="pool-modal-title">添加端点池</h2>
@@ -455,7 +455,7 @@
         </div>
 
         <!-- 端点映射配置对话框 -->
-        <div id="endpoint-mapping-modal" class="modal" style="display:none">
+        <div id="endpoint-mapping-modal" class="modal" style="display:none" role="dialog" aria-modal="true">
             <div class="modal-content" style="max-width: 500px;">
                 <div class="modal-header">
                     <h2 id="endpoint-mapping-title">配置模型映射</h2>

@@ -1164,7 +1164,9 @@ async function handleResetAll() {
 // 切换标签页
 function switchTab(tab) {
     document.querySelectorAll('.nav-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.tab === tab);
+        const isActive = btn.dataset.tab === tab;
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
     });
     document.querySelectorAll('.tab-content').forEach(content => {
         content.classList.toggle('active', content.id === `tab-${tab}`);
@@ -1717,7 +1719,30 @@ function showMainPage() {
 
 // 模态框
 function showModal(id) {
-    document.getElementById(id).style.display = 'flex';
+    const modal = document.getElementById(id);
+    modal.style.display = 'flex';
+    
+    // 点击遮罩层关闭模态框
+    modal.onclick = function(e) {
+        if (e.target === modal) {
+            hideModal(id);
+        }
+    };
+    
+    // ESC 键关闭模态框
+    const escHandler = function(e) {
+        if (e.key === 'Escape') {
+            hideModal(id);
+            document.removeEventListener('keydown', escHandler);
+        }
+    };
+    document.addEventListener('keydown', escHandler);
+    
+    // 聚焦到第一个输入框
+    setTimeout(() => {
+        const firstInput = modal.querySelector('input:not([type="hidden"]):not([type="checkbox"]), select');
+        if (firstInput) firstInput.focus();
+    }, 100);
 }
 
 function hideModal(id) {
@@ -2681,8 +2706,18 @@ function showToast(message, type = 'success') {
     toast.textContent = message;
     toast.className = `toast ${type}`;
     toast.style.display = 'block';
-    setTimeout(() => {
-        toast.style.display = 'none';
+    toast.classList.remove('hiding');
+    
+    // 清除之前的定时器
+    if (toast._hideTimer) clearTimeout(toast._hideTimer);
+    
+    // 3秒后自动隐藏（带动画）
+    toast._hideTimer = setTimeout(() => {
+        toast.classList.add('hiding');
+        setTimeout(() => {
+            toast.style.display = 'none';
+            toast.classList.remove('hiding');
+        }, 300);
     }, 3000);
 }
 
