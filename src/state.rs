@@ -674,11 +674,43 @@ impl AppState {
             return None;
         }
 
-        // 模糊匹配：缓存的模型名称包含客户端模型名称（不区分大小写）
+        // 模糊匹配：不区分大小写，去掉组织前缀后做最长包含匹配
+        // 匹配度 = min(客户端长度, 端点长度)，取匹配度最高的
+        // 支持：
+        //   deepseek-ai/deepseek-v4-flash 匹配 DeepSeek-V4-Flash（相等）
+        //   mimo-v2.5-pro 匹配 mimo-v2.5-pro-20260606（客户端被包含）
+        //   mimo-v2.5-pro 匹配 mimo-v2.5（端点被包含，但匹配度较低）
         let client_lower = client_model.to_lowercase();
-        let matches: Vec<&String> = models.iter()
-            .filter(|m| m.to_lowercase().contains(&client_lower))
-            .collect();
+        let client_suffix = client_lower.split('/').last().unwrap_or(&client_lower);
+        
+        let mut best_match: Option<(&String, usize)> = None;
+        for m in models.iter() {
+            let m_lower = m.to_lowercase();
+            let m_suffix = m_lower.split('/').last().unwrap_or(&m_lower);
+            
+            // 计算匹配度：如果一方包含另一方，取较短方的长度
+            let match_len = if m_suffix.contains(client_suffix) {
+                // 端点包含客户端（如 mimo-v2.5-pro-20260606 包含 mimo-v2.5-pro）
+                client_suffix.len()
+            } else if client_suffix.contains(m_suffix) {
+                // 客户端包含端点（如 mimo-v2.5-pro 包含 mimo-v2.5）
+                m_suffix.len()
+            } else {
+                0
+            };
+            
+            if match_len > 0 {
+                let is_better = match best_match {
+                    None => true,
+                    Some((_, best_len)) => match_len > best_len,
+                };
+                if is_better {
+                    best_match = Some((m, match_len));
+                }
+            }
+        }
+        
+        let matches: Vec<&String> = best_match.map(|(m, _)| vec![m]).unwrap_or_default();
 
         match matches.len() {
             0 => None,
