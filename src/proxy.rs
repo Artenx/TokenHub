@@ -493,6 +493,8 @@ pub async fn forward_stream_request(
         // 无错误，将第一个 chunk 和剩余 stream 合并后转发给客户端
         let ep_id = endpoint.config.id.clone();
         let ep_api_type = endpoint.config.api_type.clone();
+        let client_api_type = ctx.exposed_api.api_type.clone();
+        let need_convert = std::mem::discriminant(&client_api_type) != std::mem::discriminant(&ep_api_type);
         let state_clone = state.clone();
 
         let first_stream = futures_util::stream::once(async move { Ok::<_, reqwest::Error>(first_chunk) });
@@ -508,39 +510,91 @@ pub async fn forward_stream_request(
                 }
             }
         }
-        let body_stream = response_builder
-            .content_type("text/event-stream")
-            .insert_header(("Cache-Control", "no-cache"))
-            .insert_header(("Connection", "keep-alive"))
-            .streaming({
-                let mut buffer = String::new();
-                full_stream.map(move |chunk| {
-                    let chunk = chunk.map_err(std::io::Error::other);
-                    if let Ok(data) = &chunk {
-                        if let Ok(text) = std::str::from_utf8(data) {
-                            buffer.push_str(text);
-                            while let Some(line_end) = buffer.find('\n') {
-                                let line = buffer[..line_end].trim().to_string();
-                                buffer = buffer[line_end + 1..].to_string();
-                                if line.starts_with("data: ") && !line.contains("[DONE]") {
-                                    let json_str = &line[6..];
-                                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
-                                        if json.get("usage").is_some() {
-                                            let tokens = parse_token_usage(json_str.as_bytes(), &ep_api_type);
-                                            if tokens > 0 {
-                                                state_clone.update_endpoint_tokens(&ep_id, tokens);
+
+        if need_convert {
+            // 需要格式转换
+            let mut converter = crate::converter::StreamConverter::new(ep_api_type.clone(), client_api_type);
+            let body_stream = response_builder
+                .content_type("text/event-stream")
+                .insert_header(("Cache-Control", "no-cache"))
+                .insert_header(("Connection", "keep-alive"))
+                .streaming({
+                    let mut buffer = String::new();
+                    let mut output_buffer = Vec::new();
+                    full_stream.map(move |chunk| {
+                        let chunk = chunk.map_err(std::io::Error::other);
+                        if let Ok(data) = &chunk {
+                            if let Ok(text) = std::str::from_utf8(data) {
+                                buffer.push_str(text);
+                                while let Some(line_end) = buffer.find('\n') {
+                                    let line = buffer[..line_end].trim().to_string();
+                                    buffer = buffer[line_end + 1..].to_string();
+                                    if line.is_empty() { continue; }
+                                    // token 统计（从原始格式解析）
+                                    if line.starts_with("data: ") && !line.contains("[DONE]") {
+                                        let json_str = &line[6..];
+                                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
+                                            if json.get("usage").is_some() {
+                                                let tokens = parse_token_usage(json_str.as_bytes(), &ep_api_type);
+                                                if tokens > 0 {
+                                                    state_clone.update_endpoint_tokens(&ep_id, tokens);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // 格式转换
+                                    let converted_lines = converter.convert_chunk(&line);
+                                    for converted in converted_lines {
+                                        output_buffer.push(converted);
+                                    }
+                                }
+                            }
+                        }
+                        // 返回转换后的数据
+                        if output_buffer.is_empty() {
+                            Ok::<_, std::io::Error>(bytes::Bytes::new())
+                        } else {
+                            let output: String = output_buffer.drain(..).collect();
+                            Ok(bytes::Bytes::from(output))
+                        }
+                    })
+                });
+            return Ok(body_stream);
+        } else {
+            // 同格式，直接转发
+            let body_stream = response_builder
+                .content_type("text/event-stream")
+                .insert_header(("Cache-Control", "no-cache"))
+                .insert_header(("Connection", "keep-alive"))
+                .streaming({
+                    let mut buffer = String::new();
+                    full_stream.map(move |chunk| {
+                        let chunk = chunk.map_err(std::io::Error::other);
+                        if let Ok(data) = &chunk {
+                            if let Ok(text) = std::str::from_utf8(data) {
+                                buffer.push_str(text);
+                                while let Some(line_end) = buffer.find('\n') {
+                                    let line = buffer[..line_end].trim().to_string();
+                                    buffer = buffer[line_end + 1..].to_string();
+                                    if line.starts_with("data: ") && !line.contains("[DONE]") {
+                                        let json_str = &line[6..];
+                                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
+                                            if json.get("usage").is_some() {
+                                                let tokens = parse_token_usage(json_str.as_bytes(), &ep_api_type);
+                                                if tokens > 0 {
+                                                    state_clone.update_endpoint_tokens(&ep_id, tokens);
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
-                    chunk
-                })
-            });
-
-        return Ok(body_stream);
+                        chunk
+                    })
+                });
+            return Ok(body_stream);
+        }
     }
 
     Err(ctx.into_final_error())

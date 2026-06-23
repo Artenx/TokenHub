@@ -234,30 +234,34 @@ pub fn parse_openai_response(body: &Value) -> UnifiedResponse {
     let id = body.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
-    // 检查错误
     if let Some(error) = body.get("error") {
         return UnifiedResponse {
-            id, model,
-            content: String::new(),
-            finish_reason: None,
-            input_tokens: 0, output_tokens: 0,
-            is_error: true,
+            id, model, content: String::new(), finish_reason: None,
+            input_tokens: 0, output_tokens: 0, is_error: true,
             error_message: error.get("message").and_then(|v| v.as_str()).map(|s| s.to_string()),
         };
     }
 
-    let content = body.get("choices")
+    let choice = body.get("choices")
         .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|c| c.get("message").or(c.get("delta")))
+        .and_then(|arr| arr.first());
+
+    let message = choice.and_then(|c| c.get("message").or(c.get("delta")));
+
+    let content = message
         .and_then(|m| m.get("content"))
         .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+        .unwrap_or("");
 
-    let finish_reason = body.get("choices")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
+    let reasoning = message
+        .and_then(|m| m.get("reasoning_content"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    // 优先使用 content，如果没有则使用 reasoning_content
+    let text = if !content.is_empty() { content.to_string() } else { reasoning.to_string() };
+
+    let finish_reason = choice
         .and_then(|c| c.get("finish_reason"))
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
@@ -265,7 +269,7 @@ pub fn parse_openai_response(body: &Value) -> UnifiedResponse {
     let input_tokens = body.get("usage").and_then(|u| u.get("prompt_tokens")).and_then(|v| v.as_u64()).unwrap_or(0);
     let output_tokens = body.get("usage").and_then(|u| u.get("completion_tokens")).and_then(|v| v.as_u64()).unwrap_or(0);
 
-    UnifiedResponse { id, model, content, finish_reason, input_tokens, output_tokens, is_error: false, error_message: None }
+    UnifiedResponse { id, model, content: text, finish_reason, input_tokens, output_tokens, is_error: false, error_message: None }
 }
 
 /// 从 OpenAI Responses 响应解析
@@ -521,6 +525,319 @@ pub fn convert_path(path: &str, from: &crate::models::ApiType, to: &crate::model
         ApiType::OpenAI => "chat/completions".to_string(),
         ApiType::OpenAIResponses => "responses".to_string(),
         ApiType::Anthropic => "messages".to_string(),
+    }
+}
+
+/// SSE 流式响应转换器
+/// 将上游的 SSE chunks 从一种格式转换为另一种格式
+pub struct StreamConverter {
+    from: crate::models::ApiType,
+    to: crate::models::ApiType,
+    response_id: String,
+    model: String,
+    finished: bool,
+}
+
+impl StreamConverter {
+    pub fn new(from: crate::models::ApiType, to: crate::models::ApiType) -> Self {
+        Self {
+            from,
+            to,
+            response_id: String::new(),
+            model: String::new(),
+            finished: false,
+        }
+    }
+
+    /// 转换一个 SSE chunk（包含 data: 前缀的完整行）
+    /// 返回转换后的 SSE 行（可能多行）
+    pub fn convert_chunk(&mut self, line: &str) -> Vec<String> {
+        use crate::models::ApiType;
+
+        if self.finished {
+            return vec![];
+        }
+
+        let line = line.trim();
+
+        // 处理 Anthropic 的 event: 行
+        if line.starts_with("event: ") {
+            return vec![];
+        }
+
+        // 处理 [DONE] 标记
+        if line == "data: [DONE]" {
+            self.finished = true;
+            return self.generate_done();
+        }
+
+        // 解析 data: 行
+        let json_str = match line.strip_prefix("data: ") {
+            Some(s) => s,
+            None => return vec![],
+        };
+
+        let json: Value = match serde_json::from_str(json_str) {
+            Ok(v) => v,
+            Err(_) => return vec![],
+        };
+
+        // 提取 id 和 model
+        if self.response_id.is_empty() {
+            self.response_id = json.get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+        }
+        if self.model.is_empty() {
+            self.model = json.get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+        }
+
+        match (&self.from, &self.to) {
+            (ApiType::OpenAI, ApiType::OpenAIResponses) => self.openai_to_responses_chunk(&json),
+            (ApiType::OpenAI, ApiType::Anthropic) => self.openai_to_anthropic_chunk(&json),
+            (ApiType::OpenAIResponses, ApiType::OpenAI) => self.responses_to_openai_chunk(&json),
+            (ApiType::OpenAIResponses, ApiType::Anthropic) => self.responses_to_anthropic_chunk(&json),
+            (ApiType::Anthropic, ApiType::OpenAI) => self.anthropic_to_openai_chunk(&json),
+            (ApiType::Anthropic, ApiType::OpenAIResponses) => self.anthropic_to_responses_chunk(&json),
+            _ => vec![format!("data: {}", json_str)],
+        }
+    }
+
+    fn openai_to_responses_chunk(&self, json: &Value) -> Vec<String> {
+        let delta = json.get("choices")
+            .and_then(|c| c.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|c| c.get("delta"));
+
+        let content = delta
+            .and_then(|d| d.get("content"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let reasoning = delta
+            .and_then(|d| d.get("reasoning_content"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let finish_reason = json.get("choices")
+            .and_then(|c| c.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|c| c.get("finish_reason"))
+            .and_then(|v| v.as_str());
+
+        let mut result = Vec::new();
+
+        // 优先使用 content，如果没有则使用 reasoning_content
+        let text = if !content.is_empty() { content } else { reasoning };
+
+        if !text.is_empty() {
+            let delta = serde_json::json!({
+                "type": "response.output_text.delta",
+                "output_index": 0,
+                "content_index": 0,
+                "delta": text
+            });
+            result.push(format!("event: response.output_text.delta\ndata: {}\n", delta));
+        }
+
+        if finish_reason.is_some() {
+            let completed = serde_json::json!({
+                "type": "response.completed",
+                "response": {
+                    "id": format!("resp-{}", self.response_id),
+                    "object": "response",
+                    "model": self.model,
+                    "status": "completed"
+                }
+            });
+            result.push(format!("event: response.completed\ndata: {}\n", completed));
+        }
+
+        result
+    }
+
+    fn openai_to_anthropic_chunk(&self, json: &Value) -> Vec<String> {
+        let delta = json.get("choices")
+            .and_then(|c| c.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|c| c.get("delta"));
+
+        let content = delta
+            .and_then(|d| d.get("content"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let reasoning = delta
+            .and_then(|d| d.get("reasoning_content"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let finish_reason = json.get("choices")
+            .and_then(|c| c.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|c| c.get("finish_reason"))
+            .and_then(|v| v.as_str());
+
+        let mut result = Vec::new();
+
+        // 优先使用 content，如果没有则使用 reasoning_content
+        let text = if !content.is_empty() { content } else { reasoning };
+
+        if !text.is_empty() {
+            let delta = serde_json::json!({
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": text}
+            });
+            result.push(format!("event: content_block_delta\ndata: {}\n", delta));
+        }
+
+        if finish_reason.is_some() {
+            let stop = serde_json::json!({"type": "message_stop"});
+            result.push(format!("event: message_stop\ndata: {}\n", stop));
+        }
+
+        result
+    }
+
+    fn responses_to_openai_chunk(&self, json: &Value) -> Vec<String> {
+        let event_type = json.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+        match event_type {
+            "response.output_text.delta" => {
+                let delta_text = json.get("delta").and_then(|v| v.as_str()).unwrap_or("");
+                let chunk = serde_json::json!({
+                    "id": self.response_id,
+                    "object": "chat.completion.chunk",
+                    "model": self.model,
+                    "choices": [{
+                        "index": 0,
+                        "delta": {"content": delta_text},
+                        "finish_reason": null
+                    }]
+                });
+                vec![format!("data: {}\n", chunk)]
+            }
+            "response.completed" | "response.output_text.done" => {
+                let chunk = serde_json::json!({
+                    "id": self.response_id,
+                    "object": "chat.completion.chunk",
+                    "model": self.model,
+                    "choices": [{
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop"
+                    }]
+                });
+                vec![format!("data: {}\n", chunk)]
+            }
+            _ => vec![],
+        }
+    }
+
+    fn responses_to_anthropic_chunk(&self, json: &Value) -> Vec<String> {
+        let event_type = json.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+        match event_type {
+            "response.output_text.delta" => {
+                let delta_text = json.get("delta").and_then(|v| v.as_str()).unwrap_or("");
+                let delta = serde_json::json!({
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": delta_text}
+                });
+                vec![format!("event: content_block_delta\ndata: {}\n", delta)]
+            }
+            "response.completed" | "response.output_text.done" => {
+                let stop = serde_json::json!({"type": "message_stop"});
+                vec![format!("event: message_stop\ndata: {}\n", stop)]
+            }
+            _ => vec![],
+        }
+    }
+
+    fn anthropic_to_openai_chunk(&self, json: &Value) -> Vec<String> {
+        let event_type = json.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+        match event_type {
+            "content_block_delta" => {
+                let delta_text = json.get("delta")
+                    .and_then(|d| d.get("text"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let chunk = serde_json::json!({
+                    "id": self.response_id,
+                    "object": "chat.completion.chunk",
+                    "model": self.model,
+                    "choices": [{
+                        "index": 0,
+                        "delta": {"content": delta_text},
+                        "finish_reason": null
+                    }]
+                });
+                vec![format!("data: {}\n", chunk)]
+            }
+            "message_stop" => {
+                let chunk = serde_json::json!({
+                    "id": self.response_id,
+                    "object": "chat.completion.chunk",
+                    "model": self.model,
+                    "choices": [{
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop"
+                    }]
+                });
+                vec![format!("data: {}\n", chunk)]
+            }
+            _ => vec![],
+        }
+    }
+
+    fn anthropic_to_responses_chunk(&self, json: &Value) -> Vec<String> {
+        let event_type = json.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+        match event_type {
+            "content_block_delta" => {
+                let delta_text = json.get("delta")
+                    .and_then(|d| d.get("text"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let delta = serde_json::json!({
+                    "type": "response.output_text.delta",
+                    "output_index": 0,
+                    "content_index": 0,
+                    "delta": delta_text
+                });
+                vec![format!("event: response.output_text.delta\ndata: {}\n", delta)]
+            }
+            "message_stop" => {
+                let completed = serde_json::json!({
+                    "type": "response.completed",
+                    "response": {
+                        "id": format!("resp-{}", self.response_id),
+                        "object": "response",
+                        "model": self.model,
+                        "status": "completed"
+                    }
+                });
+                vec![format!("event: response.completed\ndata: {}\n", completed)]
+            }
+            _ => vec![],
+        }
+    }
+
+    fn generate_done(&self) -> Vec<String> {
+        use crate::models::ApiType;
+
+        match &self.to {
+            ApiType::OpenAI => vec!["data: [DONE]\n".to_string()],
+            ApiType::OpenAIResponses | ApiType::Anthropic => vec![],
+        }
     }
 }
 
