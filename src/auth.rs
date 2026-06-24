@@ -51,15 +51,20 @@ pub fn check_api_auth(
         _ => return Ok(()),
     };
 
-    // 从 Authorization 头获取密钥
-    let auth_header = req
+    // 从 Authorization 头或 x-api-key 头获取密钥
+    let provided_key = req
         .headers()
         .get("Authorization")
         .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer ").or(Some(v)))
+        .map(|v| v.to_string())
+        .or_else(|| {
+            req.headers()
+                .get("x-api-key")
+                .and_then(|v| v.to_str().ok())
+                .map(|v| v.to_string())
+        })
         .ok_or(AppError::Unauthorized)?;
-
-    // 支持 "Bearer sk-xxx" 格式
-    let provided_key = auth_header.strip_prefix("Bearer ").unwrap_or(auth_header);
 
     if provided_key == expected_key {
         Ok(())
