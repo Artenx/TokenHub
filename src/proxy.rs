@@ -302,10 +302,10 @@ fn build_upstream_request(
         target_url,
     );
 
-    // 复制请求头（跳过认证头）
+    // 复制请求头（跳过认证头和连接控制头）
     for (key, value) in req.headers() {
         let key_str = key.as_str().to_lowercase();
-        if key_str != "host" && key_str != "content-length" && key_str != "authorization" && key_str != "x-api-key" {
+        if key_str != "host" && key_str != "content-length" && key_str != "authorization" && key_str != "x-api-key" && key_str != "connection" {
             if let Ok(v) = value.to_str() {
                 builder = builder.header(key.as_str(), v);
             }
@@ -676,6 +676,11 @@ async fn forward_to_endpoint(
     );
 
     for (key, value) in &headers {
+        let key_str = key.as_str().to_lowercase();
+        // 跳过连接控制头和传输编码头（actix-web 会自动处理）
+        if key_str == "connection" || key_str == "transfer-encoding" {
+            continue;
+        }
         if let Ok(v) = value.to_str() {
             response_builder.insert_header((key.as_str(), v));
         }
