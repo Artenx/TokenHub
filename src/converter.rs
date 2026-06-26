@@ -516,11 +516,18 @@ pub fn convert_response(body: &Value, from: &crate::models::ApiType, to: &crate:
 pub fn convert_path(path: &str, from: &crate::models::ApiType, to: &crate::models::ApiType) -> String {
     use crate::models::ApiType;
 
+    // 同格式不转换
     if std::mem::discriminant(from) == std::mem::discriminant(to) {
         return path.to_string();
     }
 
-    // 从源格式的路径转换为目标格式的路径
+    // 特殊路径不转换（如 /models, /models/xxx）
+    let path_lower = path.to_lowercase();
+    if path_lower == "models" || path_lower.starts_with("models/") {
+        return path.to_string();
+    }
+
+    // 根据目标格式转换路径
     match to {
         ApiType::OpenAI => "chat/completions".to_string(),
         ApiType::OpenAIResponses => "responses".to_string(),
