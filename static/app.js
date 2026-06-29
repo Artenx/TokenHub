@@ -617,6 +617,14 @@ function renderEndpointsOverview() {
                         <span>${formatNumber(ep.tokens_used)} / ${formatLimit(ep.token_limit)}</span>
                     </div>
                     <div class="endpoint-detail">
+                        <label>请求限额</label>
+                        <span>${ep.request_limit > 0 ? formatNumber(ep.request_limit) : '无上限'}</span>
+                    </div>
+                    <div class="endpoint-detail">
+                        <label>已请求</label>
+                        <span>${formatNumber(ep.requests_used)}</span>
+                    </div>
+                    <div class="endpoint-detail">
                         <label>请求数</label>
                         <span>${formatNumber(ep.total_requests)}</span>
                     </div>
@@ -771,6 +779,14 @@ function renderEndpointsList() {
                     <div class="endpoint-detail">
                         <label>限额</label>
                         <span>${formatLimit(ep.token_limit)}</span>
+                    </div>
+                    <div class="endpoint-detail">
+                        <label>请求限额</label>
+                        <span>${ep.request_limit > 0 ? formatNumber(ep.request_limit) : '无上限'}</span>
+                    </div>
+                    <div class="endpoint-detail">
+                        <label>已请求</label>
+                        <span>${formatNumber(ep.requests_used)}</span>
                     </div>
                 </div>
                 ${isUnlimited ? '' : `<div class="progress-bar">
