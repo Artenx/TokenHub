@@ -8,7 +8,9 @@
 
 - **Multi-endpoint pools** - Group endpoints into pools with passthrough or mapping model name modes
 - **Load balancing** - Round Robin, Failover, and Random algorithms with automatic retry on failure
-- **Token quota management** - Supports unlimited, manual reset, and daily auto-reset
+- **Token quota management** - Supports unlimited, manual reset, daily auto-reset, and 5-hour rolling window
+- **Request count limit** - Independent request cap per endpoint, supports manual/daily/5-hour rolling reset
+- **Sliding window algorithm** - 5-hour rolling window, old consumption auto-expires, no manual reset needed
 - **Custom routing** - Configure external API prefixes with independent authentication keys
 - **Web dashboard** - Visual management of endpoints, pools, APIs, and system settings
 
