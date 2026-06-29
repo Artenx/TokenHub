@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
 /// 接口类型
@@ -57,13 +57,17 @@ impl std::fmt::Display for ScheduleAlgorithm {
 }
 
 /// 限额重置方式
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ResetPolicy {
     /// 一次性手动重置
+    #[default]
     Manual,
     /// 每日零点自动重置
     Daily,
+    /// 滚动5小时自动重置（仅统计最近5小时消耗）
+    #[serde(alias = "Rolling5h")]
+    Rolling5h,
 }
 
 /// 代理端点配置
@@ -76,6 +80,12 @@ pub struct EndpointConfig {
     pub api_key: String,
     pub token_limit: u64,
     pub reset_policy: ResetPolicy,
+    /// 请求次数限制（0 表示无上限）
+    #[serde(default)]
+    pub request_limit: u64,
+    /// 请求次数重置方式
+    #[serde(default)]
+    pub request_reset_policy: ResetPolicy,
     pub enabled: bool,
     /// 所属池ID列表（支持多池）
     #[serde(default)]
@@ -101,6 +111,14 @@ pub struct EndpointState {
     pub last_used: Option<DateTime<Utc>>,
     pub error_count: u32,
     pub total_requests: u64,
+    /// 滑动窗口历史：(时间戳, 当时的累计tokens_used)
+    #[serde(default)]
+    pub token_history: Vec<(DateTime<Utc>, u64)>,
+    /// 已使用的请求次数（重置后归零）
+    pub requests_used: u64,
+    /// 请求滑动窗口历史：(时间戳, 当时的累计requests_used)
+    #[serde(default)]
+    pub request_history: Vec<(DateTime<Utc>, u64)>,
 }
 
 impl EndpointState {
@@ -112,18 +130,108 @@ impl EndpointState {
             last_used: None,
             error_count: 0,
             total_requests: 0,
+            token_history: Vec::new(),
+            requests_used: 0,
+            request_history: Vec::new(),
+        }
+    }
+
+    /// 计算滚动5小时窗口内的有效 token 消耗量
+    pub fn effective_tokens(&self) -> u64 {
+        match self.config.reset_policy {
+            ResetPolicy::Rolling5h => {
+                let now = Utc::now();
+                let window_start = now - Duration::hours(5);
+                let mut tokens_before_window = 0u64;
+                for (ts, cum_tokens) in &self.token_history {
+                    if *ts <= window_start {
+                        tokens_before_window = *cum_tokens;
+                    } else {
+                        break;
+                    }
+                }
+                self.tokens_used.saturating_sub(tokens_before_window)
+            }
+            _ => self.tokens_used,
+        }
+    }
+
+    /// 计算滚动窗口内的有效请求次数
+    pub fn effective_requests(&self) -> u64 {
+        match self.config.request_reset_policy {
+            ResetPolicy::Rolling5h => {
+                let now = Utc::now();
+                let window_start = now - Duration::hours(5);
+                let mut reqs_before_window = 0u64;
+                for (ts, cum_reqs) in &self.request_history {
+                    if *ts <= window_start {
+                        reqs_before_window = *cum_reqs;
+                    } else {
+                        break;
+                    }
+                }
+                self.requests_used.saturating_sub(reqs_before_window)
+            }
+            _ => self.requests_used,
         }
     }
 
     pub fn is_available(&self) -> bool {
-        self.config.enabled && (self.config.token_limit == 0 || self.tokens_used < self.config.token_limit)
+        if !self.config.enabled {
+            return false;
+        }
+
+        // 检查 token 限制
+        if self.config.token_limit > 0 {
+            let below_token_limit = match self.config.reset_policy {
+                ResetPolicy::Rolling5h => self.effective_tokens() < self.config.token_limit,
+                _ => self.tokens_used < self.config.token_limit,
+            };
+            if !below_token_limit {
+                return false;
+            }
+        }
+
+        // 检查请求次数限制
+        if self.config.request_limit > 0 {
+            let below_req_limit = match self.config.request_reset_policy {
+                ResetPolicy::Rolling5h => self.effective_requests() < self.config.request_limit,
+                _ => self.requests_used < self.config.request_limit,
+            };
+            if !below_req_limit {
+                return false;
+            }
+        }
+
+        true
     }
 
     pub fn tokens_remaining(&self) -> u64 {
         if self.config.token_limit == 0 {
             u64::MAX // 无上限
         } else {
-            self.config.token_limit.saturating_sub(self.tokens_used)
+            match self.config.reset_policy {
+                ResetPolicy::Rolling5h => {
+                    let used = self.effective_tokens();
+                    self.config.token_limit.saturating_sub(used)
+                }
+                _ => self.config.token_limit.saturating_sub(self.tokens_used),
+            }
+        }
+    }
+
+    /// 计算剩余可用请求次数
+    pub fn requests_remaining(&self) -> u64 {
+        if self.config.request_limit == 0 {
+            u64::MAX
+        } else {
+            match self.config.request_reset_policy {
+                ResetPolicy::Rolling5h => {
+                    let used = self.effective_requests();
+                    self.config.request_limit.saturating_sub(used)
+                }
+                _ => self.config.request_limit.saturating_sub(self.requests_used),
+            }
         }
     }
 
@@ -131,12 +239,38 @@ impl EndpointState {
         self.tokens_used += amount;
         self.last_used = Some(Utc::now());
         self.total_requests += 1;
+        self.requests_used += 1;
+
+        // Token 滑动窗口记录
+        if self.config.reset_policy == ResetPolicy::Rolling5h {
+            let now = Utc::now();
+            let cutoff = now - Duration::hours(6);
+            self.token_history.retain(|(ts, _)| *ts > cutoff);
+            let last_ts = self.token_history.last().map(|(ts, _)| *ts);
+            if last_ts.map(|ts| now - ts > Duration::seconds(10)).unwrap_or(true) {
+                self.token_history.push((now, self.tokens_used));
+            }
+        }
+
+        // 请求次数滑动窗口记录
+        if self.config.request_reset_policy == ResetPolicy::Rolling5h {
+            let now = Utc::now();
+            let cutoff = now - Duration::hours(6);
+            self.request_history.retain(|(ts, _)| *ts > cutoff);
+            let last_ts = self.request_history.last().map(|(ts, _)| *ts);
+            if last_ts.map(|ts| now - ts > Duration::seconds(10)).unwrap_or(true) {
+                self.request_history.push((now, self.requests_used));
+            }
+        }
     }
 
     pub fn reset(&mut self) {
         self.tokens_used = 0;
         self.last_reset = Utc::now();
         self.error_count = 0;
+        self.token_history.clear();
+        self.requests_used = 0;
+        self.request_history.clear();
     }
 }
 
@@ -247,6 +381,12 @@ pub struct EndpointRequest {
     pub api_key: String,
     pub token_limit: u64,
     pub reset_policy: ResetPolicy,
+    /// 请求次数限制
+    #[serde(default)]
+    pub request_limit: u64,
+    /// 请求次数重置方式
+    #[serde(default)]
+    pub request_reset_policy: ResetPolicy,
     pub enabled: Option<bool>,
     /// 所属池ID列表（支持多池）
     #[serde(default)]
@@ -324,6 +464,10 @@ pub struct EndpointStats {
     pub pool_ids: Vec<String>,
     pub timeout: u64,
     pub reset_policy: ResetPolicy,
+    pub request_limit: u64,
+    pub requests_used: u64,
+    pub requests_remaining: u64,
+    pub request_reset_policy: ResetPolicy,
     pub model_mappings: Vec<ModelMapping>,
 }
 

@@ -206,6 +206,28 @@ function initEventListeners() {
         updateResetPolicy();
     }
 
+    // 监听请求次数限制变化，控制重置方式
+    const epReqLimit = document.getElementById('ep-req-limit');
+    const epReqReset = document.getElementById('ep-req-reset');
+    const epReqResetHint = document.getElementById('ep-req-reset-hint');
+    if (epReqLimit && epReqReset) {
+        const updateReqResetPolicy = () => {
+            if (!epReqLimit.value || epReqLimit.value === '0') {
+                // 请求限制为空时，固定为手动重置并禁用
+                epReqReset.value = 'manual';
+                epReqReset.disabled = true;
+                if (epReqResetHint) epReqResetHint.style.display = 'block';
+            } else {
+                // 请求限制不为空时，启用选择
+                epReqReset.disabled = false;
+                if (epReqResetHint) epReqResetHint.style.display = 'none';
+            }
+        };
+        epReqLimit.addEventListener('input', updateReqResetPolicy);
+        // 初始化时也检查一次
+        updateReqResetPolicy();
+    }
+
     // 添加模型映射按钮
     const btnAddMapping = document.getElementById('btn-add-mapping');
     if (btnAddMapping) {
@@ -803,6 +825,12 @@ function addEndpointToPool(poolId) {
         epLimitInput.dispatchEvent(new Event('input'));
     }
     
+    // 触发请求限制变化事件，控制重置方式
+    const epReqLimitInput = document.getElementById('ep-req-limit');
+    if (epReqLimitInput) {
+        epReqLimitInput.dispatchEvent(new Event('input'));
+    }
+    
     showModal('endpoint-modal');
 }
 
@@ -819,6 +847,16 @@ async function editEndpoint(id, fromPool = false) {
     document.getElementById('ep-limit').value = ep.token_limit === 999999999999 ? '' : (ep.token_limit || '');
     document.getElementById('ep-timeout').value = ep.timeout || 300;
     document.getElementById('ep-enabled').checked = ep.enabled;
+
+    // 请求次数限制
+    document.getElementById('ep-req-limit').value = ep.request_limit || '';
+    document.getElementById('ep-req-reset').value = ep.request_reset_policy || 'manual';
+
+    // 触发请求限制变化事件，控制重置方式的禁用状态
+    const epReqLimitInput = document.getElementById('ep-req-limit');
+    if (epReqLimitInput) {
+        epReqLimitInput.dispatchEvent(new Event('input'));
+    }
 
     // 更新完整路径显示
     updateEndpointFullUrl();
@@ -1161,6 +1199,11 @@ async function handleSaveEndpoint(e) {
     // 处理 reset_policy：默认为每日重置
     const resetPolicy = document.getElementById('ep-reset').value || 'daily';
     
+    // 处理请求次数限制
+    const reqLimitInput = document.getElementById('ep-req-limit').value;
+    const requestLimit = reqLimitInput ? parseInt(reqLimitInput) : 0;
+    const reqResetPolicy = document.getElementById('ep-req-reset').value || 'manual';
+    
     const data = {
         name: document.getElementById('ep-name').value,
         url: document.getElementById('ep-url').value,
@@ -1169,6 +1212,8 @@ async function handleSaveEndpoint(e) {
         token_limit: tokenLimit,
         timeout: parseInt(document.getElementById('ep-timeout').value) || 300,
         reset_policy: resetPolicy,
+        request_limit: requestLimit,
+        request_reset_policy: reqResetPolicy,
         enabled: document.getElementById('ep-enabled').checked,
         pool_ids: poolId ? [poolId] : [],
         model_mappings: getModelMappings()

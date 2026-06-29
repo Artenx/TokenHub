@@ -295,11 +295,26 @@
                     </div>
                     <div class="form-group">
                         <label>限额重置</label>
-                        <select id="ep-reset">
-                            <option value="manual">手动重置</option>
-                            <option value="daily">零点自动重置</option>
-                        </select>
+                         <select id="ep-reset">
+                             <option value="manual">手动重置</option>
+                             <option value="daily">零点自动重置</option>
+                             <option value="Rolling5h">5小时滚动重置</option>
+                         </select>
                         <small id="ep-reset-hint" style="display:none;">Token无上限端点，无需设置重置方式</small>
+                    </div>
+                    <div class="form-group">
+                        <label>请求次数限制</label>
+                        <input type="number" id="ep-req-limit" placeholder="500">
+                        <small>置空则请求次数无上限。达到限制后端点自动标记为不可用。</small>
+                    </div>
+                    <div class="form-group">
+                        <label>请求重置方式</label>
+                         <select id="ep-req-reset">
+                             <option value="manual">手动重置</option>
+                             <option value="daily">零点自动重置</option>
+                             <option value="Rolling5h">5小时滚动重置</option>
+                         </select>
+                        <small id="ep-req-reset-hint" style="display:none;">请求次数无上限端点，无需设置重置方式</small>
                     </div>
                     <div class="form-group">
                         <label>

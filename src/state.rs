@@ -113,6 +113,8 @@ impl AppState {
             api_key: req.api_key,
             token_limit: req.token_limit,
             reset_policy: req.reset_policy,
+            request_limit: req.request_limit,
+            request_reset_policy: req.request_reset_policy,
             enabled: req.enabled.unwrap_or(true),
             pool_ids: req.pool_ids,
             timeout: req.timeout.unwrap_or(300),
@@ -149,6 +151,8 @@ impl AppState {
             ep.config.api_key = req.api_key;
             ep.config.token_limit = req.token_limit;
             ep.config.reset_policy = req.reset_policy;
+            ep.config.request_limit = req.request_limit;
+            ep.config.request_reset_policy = req.request_reset_policy;
             if let Some(enabled) = req.enabled {
                 ep.config.enabled = enabled;
             }
@@ -442,6 +446,10 @@ impl AppState {
                 token_limit: ep.config.token_limit,
                 tokens_remaining: ep.tokens_remaining(),
                 enabled: ep.config.enabled,
+                request_limit: ep.config.request_limit,
+                requests_used: ep.requests_used,
+                requests_remaining: ep.requests_remaining(),
+                request_reset_policy: ep.config.request_reset_policy.clone(),
                 last_used: ep.last_used,
                 total_requests: ep.total_requests,
                 error_count: ep.error_count,
@@ -558,6 +566,19 @@ impl AppState {
                 if let Some(reqs) = state_data.get("total_requests").and_then(|v| v.as_u64()) {
                     ep.total_requests = reqs;
                 }
+                if let Some(reqs_used) = state_data.get("requests_used").and_then(|v| v.as_u64()) {
+                    ep.requests_used = reqs_used;
+                }
+                if let Some(hist) = state_data.get("token_history") {
+                    if let Ok(v) = serde_json::from_value::<Vec<(chrono::DateTime<Utc>, u64)>>(hist.clone()) {
+                        ep.token_history = v;
+                    }
+                }
+                if let Some(hist) = state_data.get("request_history") {
+                    if let Ok(v) = serde_json::from_value::<Vec<(chrono::DateTime<Utc>, u64)>>(hist.clone()) {
+                        ep.request_history = v;
+                    }
+                }
             }
         }
         info!("已从状态文件恢复 {} 个端点的运行时状态", count);
@@ -575,6 +596,9 @@ impl AppState {
                     "last_used": ep.last_used,
                     "error_count": ep.error_count,
                     "total_requests": ep.total_requests,
+                    "requests_used": ep.requests_used,
+                    "token_history": ep.token_history,
+                    "request_history": ep.request_history,
                 }))
             }).collect()
         };
@@ -618,6 +642,18 @@ impl AppState {
                 }
             }
             
+            // 每日重置模式：请求次数每天零点自动清零
+            if ep.config.request_reset_policy == ResetPolicy::Daily && ep.config.request_limit > 0 {
+                let last_reset_date = ep.last_reset.date_naive();
+                let today = now.date_naive();
+                if last_reset_date < today {
+                    ep.requests_used = 0;
+                    ep.request_history.clear();
+                    self.mark_dirty();
+                    info!("端点 {} 请求次数每日自动重置", ep.config.name);
+                }
+            }
+
             // 手动重置模式：不做任何操作，已使用达到限额时 is_available() 自动返回 false
         }
     }

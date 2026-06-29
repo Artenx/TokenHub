@@ -47,6 +47,8 @@ pub async fn create_endpoint(
         .map_err(AppError::BadRequest)?;
     InputValidator::validate_token_limit(data.token_limit)
         .map_err(AppError::BadRequest)?;
+    InputValidator::validate_request_limit(data.request_limit)
+        .map_err(AppError::BadRequest)?;
     InputValidator::validate_timeout(data.timeout.unwrap_or(300))
         .map_err(AppError::BadRequest)?;
     
