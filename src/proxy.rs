@@ -250,7 +250,7 @@ impl RetryContext {
             if self.retry_mode == RetryMode::Same {
                 if let Some(cached_id) = self.first_endpoint_id.as_ref() {
                     // Same 模式：检查缓存的端点是否仍然可用
-                    if state.get_endpoint(cached_id).as_ref().map_or(false, |ep| ep.is_available()) {
+                    if state.get_endpoint(cached_id).as_ref().is_some_and(|ep| ep.is_available()) {
                         return Some(cached_id.clone());
                     }
                     // 端点不可用（如 token 耗尽），重新调度
@@ -331,7 +331,12 @@ fn build_upstream_request(
 }
 
 /// 发送请求并检查网络错误
-async fn send_request(builder: reqwest::RequestBuilder, endpoint_name: &str) -> Result<reqwest::Response, AppError> {
+async fn send_request(
+    builder: reqwest::RequestBuilder,
+    endpoint_name: &str,
+    timeout_secs: u64,
+) -> Result<reqwest::Response, AppError> {
+    let builder = builder.timeout(std::time::Duration::from_secs(timeout_secs));
     builder.send().await.map_err(|e| {
         let error_msg = if e.is_timeout() {
             format!("连接超时: {}", e)
@@ -437,7 +442,7 @@ pub async fn forward_stream_request(
         debug!("流式转发到: {} (尝试 {}/{})", target_url, attempt + 1, ctx.max_retries);
 
         let request_builder = build_upstream_request(state.get_ref(), req, &endpoint, &target_url, &converted_body)?;
-        let response = match send_request(request_builder, &endpoint.config.name).await {
+        let response = match send_request(request_builder, &endpoint.config.name, endpoint.config.timeout).await {
             Ok(r) => r,
             Err(e) => {
                 state.increment_endpoint_errors(&endpoint_id);
@@ -627,7 +632,7 @@ async fn forward_to_endpoint(
     };
 
     let request_builder = build_upstream_request(state, req, endpoint, &target_url, &converted_body)?;
-    let response = send_request(request_builder, &endpoint.config.name).await?;
+    let response = send_request(request_builder, &endpoint.config.name, endpoint.config.timeout).await?;
 
     let status = response.status();
     let headers = response.headers().clone();
@@ -717,7 +722,7 @@ fn parse_token_usage(body: &[u8], api_type: &ApiType) -> u64 {
                 .and_then(|u| u.get("output_tokens"))
                 .and_then(|t| t.as_u64())
                 .unwrap_or(0);
-            input + output
+            input.saturating_add(output)
         }
     }
 }

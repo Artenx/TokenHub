@@ -30,11 +30,11 @@ async fn api_proxy(
     let query = req.uri().query().map(|q| format!("?{}", q)).unwrap_or_default();
     let full_path = format!("{}{}", path, query);
 
-    // 检查是否是流式请求
-    let is_stream = {
-        let body_str = std::str::from_utf8(&body).unwrap_or("");
-        body_str.contains("\"stream\":true") || body_str.contains("\"stream\": true")
-    };
+    // 检查是否是流式请求（通过解析 JSON 的 stream 字段，避免子串误判）
+    let is_stream = serde_json::from_slice::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|v| v.get("stream").and_then(|s| s.as_bool()))
+        .unwrap_or(false);
 
     if is_stream {
         proxy::forward_stream_request(state.clone(), &req, body, &full_path).await

@@ -1,7 +1,7 @@
 use crate::models::*;
 use chrono::Utc;
 use parking_lot::RwLock;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -29,6 +29,8 @@ pub struct AppState {
     pub dirty: AtomicBool,
     /// 持久化写锁（防止并发写入导致数据覆盖）
     pub save_state_mutex: tokio::sync::Mutex<()>,
+    /// 管理后台会话令牌集合
+    pub admin_sessions: RwLock<HashSet<String>>,
 }
 
 impl AppState {
@@ -58,6 +60,7 @@ impl AppState {
             state_path,
             dirty: AtomicBool::new(false),
             save_state_mutex: tokio::sync::Mutex::new(()),
+            admin_sessions: RwLock::new(HashSet::new()),
         };
 
         // 从 state.json 恢复运行时状态
@@ -100,6 +103,7 @@ impl AppState {
         if let Some(ep) = endpoints.get_mut(id) {
             ep.error_count += 1;
         }
+        self.mark_dirty();
     }
 
     /// 添加端点
@@ -161,10 +165,8 @@ impl AppState {
             if let Some(timeout) = req.timeout {
                 ep.config.timeout = timeout;
             }
-            // 更新模型映射
-            if !req.model_mappings.is_empty() {
-                ep.config.model_mappings = req.model_mappings;
-            }
+            // 更新模型映射（允许传空数组清空映射）
+            ep.config.model_mappings = req.model_mappings;
             ep.clone()
         }; // endpoints 锁在此释放
 
@@ -421,10 +423,17 @@ impl AppState {
     }
 
     /// 根据请求路径匹配对外API（取最长前缀匹配）
+    /// 要求前缀后面必须是 '/' 或路径结束，避免 /v1 匹配 /v1xyz
     pub fn match_exposed_api(&self, path: &str) -> Option<ExposedApi> {
         let config = self.config.read();
         config.exposed_apis.iter()
-            .filter(|a| a.enabled && path.starts_with(&a.prefix))
+            .filter(|a| {
+                if !a.enabled || !path.starts_with(&a.prefix) {
+                    return false;
+                }
+                // 前缀必须完整匹配：前缀后必须是路径结束或 '/'
+                path.len() == a.prefix.len() || path[a.prefix.len()..].starts_with('/')
+            })
             .max_by_key(|a| a.prefix.len())
             .cloned()
     }
@@ -580,12 +589,14 @@ impl AppState {
                     ep.requests_used = reqs_used;
                 }
                 if let Some(hist) = state_data.get("token_history") {
-                    if let Ok(v) = serde_json::from_value::<Vec<(chrono::DateTime<Utc>, u64)>>(hist.clone()) {
+                    if let Ok(mut v) = serde_json::from_value::<Vec<(chrono::DateTime<Utc>, u64)>>(hist.clone()) {
+                        v.sort_by_key(|a| a.0);
                         ep.token_history = v;
                     }
                 }
                 if let Some(hist) = state_data.get("request_history") {
-                    if let Ok(v) = serde_json::from_value::<Vec<(chrono::DateTime<Utc>, u64)>>(hist.clone()) {
+                    if let Ok(mut v) = serde_json::from_value::<Vec<(chrono::DateTime<Utc>, u64)>>(hist.clone()) {
+                        v.sort_by_key(|a| a.0);
                         ep.request_history = v;
                     }
                 }
@@ -638,33 +649,32 @@ impl AppState {
     pub async fn check_daily_reset(&self) {
         let mut endpoints = self.endpoints.write();
         let now = Utc::now();
-        
+        let today = now.date_naive();
+
         for ep in endpoints.values_mut() {
-            // 每日重置模式：每天零点自动清零
-            if ep.config.reset_policy == ResetPolicy::Daily && ep.config.token_limit > 0 {
-                let last_reset_date = ep.last_reset.date_naive();
-                let today = now.date_naive();
-                if last_reset_date < today {
-                    ep.tokens_used = 0;
-                    ep.last_reset = now;
-                    self.mark_dirty();
-                    info!("端点 {} 每日自动重置", ep.config.name);
-                }
-            }
-            
-            // 每日重置模式：请求次数每天零点自动清零
-            if ep.config.request_reset_policy == ResetPolicy::Daily && ep.config.request_limit > 0 {
-                let last_reset_date = ep.last_reset.date_naive();
-                let today = now.date_naive();
-                if last_reset_date < today {
-                    ep.requests_used = 0;
-                    ep.request_history.clear();
-                    self.mark_dirty();
-                    info!("端点 {} 请求次数每日自动重置", ep.config.name);
-                }
+            let token_daily = ep.config.reset_policy == ResetPolicy::Daily && ep.config.token_limit > 0;
+            let request_daily = ep.config.request_reset_policy == ResetPolicy::Daily && ep.config.request_limit > 0;
+            let needs_reset = ep.last_reset.date_naive() < today;
+
+            if !needs_reset || (!token_daily && !request_daily) {
+                continue;
             }
 
-            // 手动重置模式：不做任何操作，已使用达到限额时 is_available() 自动返回 false
+            if token_daily {
+                ep.tokens_used = 0;
+                ep.token_history.clear();
+                self.mark_dirty();
+                info!("端点 {} 每日自动重置Token", ep.config.name);
+            }
+
+            if request_daily {
+                ep.requests_used = 0;
+                ep.request_history.clear();
+                self.mark_dirty();
+                info!("端点 {} 请求次数每日自动重置", ep.config.name);
+            }
+
+            ep.last_reset = now;
         }
     }
 
@@ -690,6 +700,34 @@ impl AppState {
     pub fn update_failover_index(&self, pool_id: &str, new_index: usize) {
         let mut index = self.failover_index.write();
         index.insert(pool_id.to_string(), new_index);
+    }
+
+    // ========== 管理后台会话 ==========
+
+    /// 创建新的管理后台会话，返回会话令牌
+    pub fn create_admin_session(&self) -> String {
+        let token = uuid::Uuid::new_v4().to_string();
+        let mut sessions = self.admin_sessions.write();
+        sessions.insert(token.clone());
+        token
+    }
+
+    /// 校验管理后台会话令牌是否有效
+    pub fn validate_admin_session(&self, token: &str) -> bool {
+        let sessions = self.admin_sessions.read();
+        sessions.contains(token)
+    }
+
+    /// 销毁管理后台会话令牌
+    pub fn destroy_admin_session(&self, token: &str) {
+        let mut sessions = self.admin_sessions.write();
+        sessions.remove(token);
+    }
+
+    /// 清除除指定令牌外的所有管理后台会话（修改密码后使用）
+    pub fn clear_other_admin_sessions(&self, except_token: &str) {
+        let mut sessions = self.admin_sessions.write();
+        sessions.retain(|token| token == except_token);
     }
 
     // ========== 模型缓存管理 ==========
@@ -758,6 +796,7 @@ impl AppState {
 
     /// 匹配模型名称（不区分大小写，后缀匹配）
     /// 返回匹配到的端点实际模型名称
+    /// 如果匹配到多个模型，返回 ERROR: 开头的错误提示
     pub fn match_model_name(&self, endpoint_id: &str, client_model: &str) -> Option<String> {
         let cache = self.model_cache.read();
         let models = cache.get(endpoint_id)?;
@@ -774,13 +813,15 @@ impl AppState {
         //   mimo-v2.5-pro 匹配 mimo-v2.5-pro-20260606（客户端被包含）
         //   mimo-v2.5-pro 匹配 mimo-v2.5（端点被包含，但匹配度较低）
         let client_lower = client_model.to_lowercase();
-        let client_suffix = client_lower.split('/').last().unwrap_or(&client_lower);
-        
-        let mut best_match: Option<(&String, usize)> = None;
+        let client_suffix = client_lower.split('/').next_back().unwrap_or(&client_lower);
+
+        let mut best_len = 0usize;
+        let mut matches: Vec<&String> = Vec::new();
+
         for m in models.iter() {
             let m_lower = m.to_lowercase();
-            let m_suffix = m_lower.split('/').last().unwrap_or(&m_lower);
-            
+            let m_suffix = m_lower.split('/').next_back().unwrap_or(&m_lower);
+
             // 计算匹配度：如果一方包含另一方，取较短方的长度
             let match_len = if m_suffix.contains(client_suffix) {
                 // 端点包含客户端（如 mimo-v2.5-pro-20260606 包含 mimo-v2.5-pro）
@@ -791,19 +832,19 @@ impl AppState {
             } else {
                 0
             };
-            
-            if match_len > 0 {
-                let is_better = match best_match {
-                    None => true,
-                    Some((_, best_len)) => match_len > best_len,
-                };
-                if is_better {
-                    best_match = Some((m, match_len));
-                }
+
+            if match_len == 0 {
+                continue;
+            }
+
+            if match_len > best_len {
+                best_len = match_len;
+                matches.clear();
+                matches.push(m);
+            } else if match_len == best_len {
+                matches.push(m);
             }
         }
-        
-        let matches: Vec<&String> = best_match.map(|(m, _)| vec![m]).unwrap_or_default();
 
         match matches.len() {
             0 => None,

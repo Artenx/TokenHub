@@ -17,15 +17,15 @@ pub struct ChangePasswordRequest {
     pub new_password: String,
 }
 
-/// 管理员认证中间件 - 检查session中的登录状态
-pub fn check_admin_auth(req: &HttpRequest) -> Result<(), AppError> {
-    // 从cookie中检查登录状态
-    let logged_in = req
-        .cookie("admin_logged_in")
-        .map(|c| c.value() == "true")
-        .unwrap_or(false);
+/// 管理员认证中间件 - 检查 session 中的登录状态
+pub fn check_admin_auth(req: &HttpRequest, state: &AppState) -> Result<(), AppError> {
+    // 从 cookie 中获取会话令牌并校验有效性
+    let token = req
+        .cookie("admin_session")
+        .map(|c| c.value().to_string())
+        .unwrap_or_default();
 
-    if logged_in {
+    if !token.is_empty() && state.validate_admin_session(&token) {
         Ok(())
     } else {
         Err(AppError::Unauthorized)
@@ -85,15 +85,18 @@ pub async fn admin_login(
     };
 
     if body.password == admin_password {
+        // 创建服务端会话令牌，避免客户端伪造登录状态
+        let session_token = state.create_admin_session();
+
         let mut response = HttpResponse::Ok().json(serde_json::json!({
             "success": true,
             "message": "登录成功"
         }));
 
-        // 设置登录cookie
+        // 设置登录 cookie 为随机会话令牌
         let is_secure = req.uri().scheme_str() == Some("https");
         response.add_cookie(
-            &actix_web::cookie::Cookie::build("admin_logged_in", "true")
+            &actix_web::cookie::Cookie::build("admin_session", session_token)
                 .path("/")
                 .http_only(true)
                 .secure(is_secure)
@@ -109,14 +112,22 @@ pub async fn admin_login(
 }
 
 /// 管理后台登出
-pub async fn admin_logout() -> HttpResponse {
+pub async fn admin_logout(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+) -> HttpResponse {
+    // 销毁服务端会话
+    if let Some(cookie) = req.cookie("admin_session") {
+        state.destroy_admin_session(cookie.value());
+    }
+
     let mut response = HttpResponse::Ok().json(serde_json::json!({
         "success": true,
         "message": "已登出"
     }));
 
     response.add_cookie(
-        &actix_web::cookie::Cookie::build("admin_logged_in", "")
+        &actix_web::cookie::Cookie::build("admin_session", "")
             .path("/")
             .max_age(actix_web::cookie::time::Duration::ZERO)
             .finish(),
@@ -131,7 +142,7 @@ pub async fn change_admin_password(
     req: HttpRequest,
     body: web::Json<ChangePasswordRequest>,
 ) -> Result<HttpResponse, AppError> {
-    check_admin_auth(&req)?;
+    check_admin_auth(&req, state.get_ref())?;
 
     let admin_password = {
         let config = state.config.read();
@@ -149,6 +160,11 @@ pub async fn change_admin_password(
     state.change_admin_password(&body.new_password).await
         .map_err(|e| AppError::Internal(e.to_string()))?;
 
+    // 修改密码后，使其他会话失效，只保留当前会话
+    if let Some(cookie) = req.cookie("admin_session") {
+        state.clear_other_admin_sessions(cookie.value());
+    }
+
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "success": true,
         "message": "密码修改成功"
@@ -156,13 +172,16 @@ pub async fn change_admin_password(
 }
 
 /// 检查登录状态
-pub async fn check_auth_status(req: HttpRequest) -> HttpResponse {
-    let logged_in = req
-        .cookie("admin_logged_in")
-        .map(|c| c.value() == "true")
+pub async fn check_auth_status(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+) -> HttpResponse {
+    let authenticated = req
+        .cookie("admin_session")
+        .map(|c| state.validate_admin_session(c.value()))
         .unwrap_or(false);
 
     HttpResponse::Ok().json(serde_json::json!({
-        "authenticated": logged_in
+        "authenticated": authenticated
     }))
 }

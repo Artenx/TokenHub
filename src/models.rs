@@ -58,15 +58,16 @@ impl std::fmt::Display for ScheduleAlgorithm {
 
 /// 限额重置方式
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-#[serde(rename_all = "lowercase")]
 pub enum ResetPolicy {
     /// 一次性手动重置
+    #[serde(rename = "manual")]
     #[default]
     Manual,
     /// 每日零点自动重置
+    #[serde(rename = "daily")]
     Daily,
     /// 滚动5小时自动重置（仅统计最近5小时消耗）
-    #[serde(alias = "Rolling5h")]
+    #[serde(rename = "Rolling5h", alias = "rolling5h")]
     Rolling5h,
 }
 
@@ -236,10 +237,10 @@ impl EndpointState {
     }
 
     pub fn add_tokens(&mut self, amount: u64) {
-        self.tokens_used += amount;
+        self.tokens_used = self.tokens_used.saturating_add(amount);
         self.last_used = Some(Utc::now());
-        self.total_requests += 1;
-        self.requests_used += 1;
+        self.total_requests = self.total_requests.saturating_add(1);
+        self.requests_used = self.requests_used.saturating_add(1);
 
         // Token 滑动窗口记录
         if self.config.reset_policy == ResetPolicy::Rolling5h {

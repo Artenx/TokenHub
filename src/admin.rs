@@ -10,7 +10,7 @@ pub async fn list_endpoints(
     state: web::Data<AppState>,
     req: HttpRequest,
 ) -> Result<HttpResponse, AppError> {
-    check_admin_auth(&req)?;
+    check_admin_auth(&req, state.get_ref())?;
     let stats = state.get_stats();
     Ok(HttpResponse::Ok().json(stats))
 }
@@ -21,7 +21,7 @@ pub async fn get_endpoint(
     req: HttpRequest,
     path: web::Path<String>,
 ) -> Result<HttpResponse, AppError> {
-    check_admin_auth(&req)?;
+    check_admin_auth(&req, state.get_ref())?;
     let id = path.into_inner();
     let endpoint = state
         .get_endpoint(&id)
@@ -35,7 +35,7 @@ pub async fn create_endpoint(
     req: HttpRequest,
     body: web::Json<EndpointRequest>,
 ) -> Result<HttpResponse, AppError> {
-    check_admin_auth(&req)?;
+    check_admin_auth(&req, state.get_ref())?;
     let data = body.into_inner();
     
     // 输入验证
@@ -76,7 +76,7 @@ pub async fn update_endpoint(
     path: web::Path<String>,
     body: web::Json<EndpointRequest>,
 ) -> Result<HttpResponse, AppError> {
-    check_admin_auth(&req)?;
+    check_admin_auth(&req, state.get_ref())?;
     let id = path.into_inner();
     let endpoint = state
         .update_endpoint(&id, body.into_inner())
@@ -101,7 +101,7 @@ pub async fn delete_endpoint(
     req: HttpRequest,
     path: web::Path<String>,
 ) -> Result<HttpResponse, AppError> {
-    check_admin_auth(&req)?;
+    check_admin_auth(&req, state.get_ref())?;
     let id = path.into_inner();
     state
         .delete_endpoint(&id)
@@ -119,7 +119,7 @@ pub async fn toggle_endpoint(
     req: HttpRequest,
     path: web::Path<String>,
 ) -> Result<HttpResponse, AppError> {
-    check_admin_auth(&req)?;
+    check_admin_auth(&req, state.get_ref())?;
     let id = path.into_inner();
     let endpoint = state
         .toggle_endpoint(&id)
@@ -134,7 +134,7 @@ pub async fn reset_endpoint(
     req: HttpRequest,
     path: web::Path<String>,
 ) -> Result<HttpResponse, AppError> {
-    check_admin_auth(&req)?;
+    check_admin_auth(&req, state.get_ref())?;
     let id = path.into_inner();
     state
         .reset_endpoint_tokens(&id)
@@ -152,7 +152,7 @@ pub async fn reset_endpoint_requests(
     req: HttpRequest,
     path: web::Path<String>,
 ) -> Result<HttpResponse, AppError> {
-    check_admin_auth(&req)?;
+    check_admin_auth(&req, state.get_ref())?;
     let id = path.into_inner();
     state
         .reset_endpoint_requests(&id)
@@ -169,7 +169,7 @@ pub async fn reset_all_endpoints(
     state: web::Data<AppState>,
     req: HttpRequest,
 ) -> Result<HttpResponse, AppError> {
-    check_admin_auth(&req)?;
+    check_admin_auth(&req, state.get_ref())?;
     state.reset_all_tokens();
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "success": true,
@@ -182,7 +182,7 @@ pub async fn get_config(
     state: web::Data<AppState>,
     req: HttpRequest,
 ) -> Result<HttpResponse, AppError> {
-    check_admin_auth(&req)?;
+    check_admin_auth(&req, state.get_ref())?;
     let config = state.config.read();
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "listen_addr": config.listen_addr,
@@ -197,10 +197,14 @@ pub async fn update_config(
     req: HttpRequest,
     body: web::Json<ConfigUpdateRequest>,
 ) -> Result<HttpResponse, AppError> {
-    check_admin_auth(&req)?;
+    check_admin_auth(&req, state.get_ref())?;
     if let Some(new_password) = &body.admin_password {
         state.change_admin_password(new_password).await
             .map_err(|e| AppError::Internal(e.to_string()))?;
+        // 修改密码后使其他会话失效
+        if let Some(cookie) = req.cookie("admin_session") {
+            state.clear_other_admin_sessions(cookie.value());
+        }
     }
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "success": true,
@@ -213,7 +217,7 @@ pub async fn get_stats(
     state: web::Data<AppState>,
     req: HttpRequest,
 ) -> Result<HttpResponse, AppError> {
-    check_admin_auth(&req)?;
+    check_admin_auth(&req, state.get_ref())?;
     let stats = state.get_stats();
     Ok(HttpResponse::Ok().json(stats))
 }
@@ -224,7 +228,7 @@ pub async fn list_models(
     req: HttpRequest,
     body: web::Json<EndpointRequest>,
 ) -> Result<HttpResponse, AppError> {
-    check_admin_auth(&req)?;
+    check_admin_auth(&req, state.get_ref())?;
 
     let ep = body.into_inner();
     let client = &state.http_client;
@@ -308,7 +312,7 @@ pub async fn check_endpoint(
     req: HttpRequest,
     body: web::Json<EndpointRequest>,
 ) -> Result<HttpResponse, AppError> {
-    check_admin_auth(&req)?;
+    check_admin_auth(&req, state.get_ref())?;
 
     let ep = body.into_inner();
     let client = &state.http_client;
@@ -435,7 +439,7 @@ pub async fn list_pools(
     state: web::Data<AppState>,
     req: HttpRequest,
 ) -> Result<HttpResponse, AppError> {
-    check_admin_auth(&req)?;
+    check_admin_auth(&req, state.get_ref())?;
     let stats = state.get_stats();
     Ok(HttpResponse::Ok().json(stats.pools))
 }
@@ -446,7 +450,7 @@ pub async fn create_pool(
     req: HttpRequest,
     body: web::Json<PoolRequest>,
 ) -> Result<HttpResponse, AppError> {
-    check_admin_auth(&req)?;
+    check_admin_auth(&req, state.get_ref())?;
     let pool = state.add_pool(body.into_inner()).await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     Ok(HttpResponse::Created().json(pool))
@@ -459,7 +463,7 @@ pub async fn update_pool(
     path: web::Path<String>,
     body: web::Json<PoolRequest>,
 ) -> Result<HttpResponse, AppError> {
-    check_admin_auth(&req)?;
+    check_admin_auth(&req, state.get_ref())?;
     let id = path.into_inner();
     let pool = state.update_pool(&id, body.into_inner()).await
         .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -472,7 +476,7 @@ pub async fn delete_pool(
     req: HttpRequest,
     path: web::Path<String>,
 ) -> Result<HttpResponse, AppError> {
-    check_admin_auth(&req)?;
+    check_admin_auth(&req, state.get_ref())?;
     let id = path.into_inner();
     state.delete_pool(&id).await
         .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -489,7 +493,7 @@ pub async fn list_exposed_apis(
     state: web::Data<AppState>,
     req: HttpRequest,
 ) -> Result<HttpResponse, AppError> {
-    check_admin_auth(&req)?;
+    check_admin_auth(&req, state.get_ref())?;
     let stats = state.get_stats();
     Ok(HttpResponse::Ok().json(stats.exposed_apis))
 }
@@ -500,7 +504,7 @@ pub async fn create_exposed_api(
     req: HttpRequest,
     body: web::Json<ExposedApiRequest>,
 ) -> Result<HttpResponse, AppError> {
-    check_admin_auth(&req)?;
+    check_admin_auth(&req, state.get_ref())?;
     let api = state.add_exposed_api(body.into_inner()).await
         .map_err(|e| AppError::Internal(e.to_string()))?;
     Ok(HttpResponse::Created().json(api))
@@ -513,7 +517,7 @@ pub async fn update_exposed_api(
     path: web::Path<String>,
     body: web::Json<ExposedApiRequest>,
 ) -> Result<HttpResponse, AppError> {
-    check_admin_auth(&req)?;
+    check_admin_auth(&req, state.get_ref())?;
     let id = path.into_inner();
     let api = state.update_exposed_api(&id, body.into_inner()).await
         .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -526,7 +530,7 @@ pub async fn delete_exposed_api(
     req: HttpRequest,
     path: web::Path<String>,
 ) -> Result<HttpResponse, AppError> {
-    check_admin_auth(&req)?;
+    check_admin_auth(&req, state.get_ref())?;
     let id = path.into_inner();
     state.delete_exposed_api(&id).await
         .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -542,7 +546,7 @@ pub async fn toggle_exposed_api(
     req: HttpRequest,
     path: web::Path<String>,
 ) -> Result<HttpResponse, AppError> {
-    check_admin_auth(&req)?;
+    check_admin_auth(&req, state.get_ref())?;
     let id = path.into_inner();
     let api = state.toggle_exposed_api(&id).await
         .map_err(|e| AppError::Internal(e.to_string()))?;

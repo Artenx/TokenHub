@@ -28,13 +28,15 @@ impl Scheduler {
 
     /// 轮询算法：依次选择下一个可用端点
     fn round_robin(state: &AppState, pool_id: &str, available: &[String]) -> Option<String> {
-        let all_endpoints: Vec<String> = {
+        let mut all_endpoints: Vec<String> = {
             let endpoints = state.endpoints.read();
             endpoints.values()
                 .filter(|ep| ep.config.pool_ids.contains(&pool_id.to_string()))
                 .map(|ep| ep.config.id.clone())
                 .collect()
         };
+        // 按 ID 排序，保证轮询顺序在重启后一致
+        all_endpoints.sort();
 
         if all_endpoints.is_empty() {
             return None;
@@ -160,6 +162,8 @@ mod tests {
             api_key: "key".to_string(),
             token_limit: limit,
             reset_policy: ResetPolicy::Manual,
+            request_limit: 0,
+            request_reset_policy: ResetPolicy::Manual,
             enabled,
             pool_ids: vec![pool_id.to_string()],
             timeout: 300,
