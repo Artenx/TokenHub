@@ -6,7 +6,8 @@
     <title>TokenHub</title>
     <link rel="stylesheet" href="style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
     <div id="app">
@@ -44,172 +45,189 @@
 
         <!-- 主界面 -->
         <div id="main-page" class="page" style="display:none">
-            <header>
-                <div class="header-left">
+            <aside class="sidebar">
+                <div class="sidebar-brand">
                     <h1>TokenHub</h1>
                     <span class="badge">v1.0</span>
                 </div>
-                <div class="header-right">
-                    <button id="btn-logout" class="btn btn-small btn-danger">登出</button>
+                <nav class="sidebar-nav" role="navigation" aria-label="主导航">
+                    <button class="nav-btn active" data-tab="dashboard" role="tab" aria-selected="true" aria-controls="tab-dashboard">概览</button>
+                    <button class="nav-btn" data-tab="endpoint-mgmt" role="tab" aria-selected="false" aria-controls="tab-endpoint-mgmt">端点管理</button>
+                    <button class="nav-btn" data-tab="pools" role="tab" aria-selected="false" aria-controls="tab-pools">池管理</button>
+                    <button class="nav-btn" data-tab="api-mgmt" role="tab" aria-selected="false" aria-controls="tab-api-mgmt">接口管理</button>
+                    <button class="nav-btn" data-tab="settings" role="tab" aria-selected="false" aria-controls="tab-settings">设置</button>
+                </nav>
+                <div class="sidebar-footer">
+                    Crafted by Artenx
                 </div>
-            </header>
+            </aside>
 
-            <nav role="navigation" aria-label="主导航">
-                <button class="nav-btn active" data-tab="dashboard" role="tab" aria-selected="true" aria-controls="tab-dashboard">概览</button>
-                <button class="nav-btn" data-tab="endpoint-mgmt" role="tab" aria-selected="false" aria-controls="tab-endpoint-mgmt">端点管理</button>
-                <button class="nav-btn" data-tab="pools" role="tab" aria-selected="false" aria-controls="tab-pools">池管理</button>
-                <button class="nav-btn" data-tab="api-mgmt" role="tab" aria-selected="false" aria-controls="tab-api-mgmt">接口管理</button>
-                <button class="nav-btn" data-tab="settings" role="tab" aria-selected="false" aria-controls="tab-settings">设置</button>
-            </nav>
+            <div class="main-wrapper">
+                <header>
+                    <div class="header-left">
+                        <button class="btn btn-small menu-toggle" id="menu-toggle" aria-label="切换导航">☰</button>
+                        <h1>TokenHub</h1>
+                    </div>
+                    <div class="header-right">
+                        <button id="btn-logout" class="btn btn-small btn-danger">登出</button>
+                    </div>
+                </header>
 
-            <!-- 仪表盘 -->
-            <div id="tab-dashboard" class="tab-content active">
-                <div class="stats-grid">
-                    <div class="stat-card stat-card-accent">
-                        <div class="stat-icon">⚡</div>
-                        <div class="stat-info">
-                            <h3>端点总数</h3>
-                            <div class="stat-value" id="stat-total">0</div>
-                            <div class="stat-sub" id="stat-active-sub">活跃: 0</div>
+                <main>
+                    <!-- 仪表盘 -->
+                    <div id="tab-dashboard" class="tab-content active">
+                        <div class="stats-grid">
+                            <div class="stat-card stat-card-accent">
+                                <div class="stat-icon">⚡</div>
+                                <div class="stat-info">
+                                    <h3>端点总数</h3>
+                                    <div class="stat-value" id="stat-total">0</div>
+                                    <div class="stat-sub" id="stat-active-sub">活跃: 0</div>
+                                </div>
+                            </div>
+                            <div class="stat-card stat-card-accent">
+                                <div class="stat-icon">📊</div>
+                                <div class="stat-info">
+                                    <h3>已用 Token</h3>
+                                    <div class="stat-value" id="stat-used">0</div>
+                                    <div class="stat-sub" id="stat-limit-sub">限额: 0</div>
+                                </div>
+                            </div>
+                            <div class="stat-card stat-card-accent">
+                                <div class="stat-icon">📈</div>
+                                <div class="stat-info">
+                                    <h3>Token 使用率</h3>
+                                    <div class="stat-value" id="stat-usage-rate">0%</div>
+                                    <div class="progress-bar" style="height: 4px; margin-top: 8px;">
+                                        <div class="progress-fill" id="stat-usage-bar" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="stat-card stat-card-accent">
+                                <div class="stat-icon">🔄</div>
+                                <div class="stat-info">
+                                    <h3>总请求数</h3>
+                                    <div class="stat-value" id="stat-requests">0</div>
+                                    <div class="stat-sub" id="stat-errors-sub">错误: 0</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="stats-grid" style="grid-template-columns: repeat(3, 1fr);">
+                            <div class="stat-card stat-card-accent">
+                                <div class="stat-icon">🔄</div>
+                                <div class="stat-info">
+                                    <h3>端点池</h3>
+                                    <div class="stat-value" id="stat-pools">0</div>
+                                </div>
+                            </div>
+                            <div class="stat-card stat-card-accent">
+                                <div class="stat-icon">🔗</div>
+                                <div class="stat-info">
+                                    <h3>API 接口</h3>
+                                    <div class="stat-value" id="stat-apis">0</div>
+                                </div>
+                            </div>
+                            <div class="stat-card stat-card-accent">
+                                <div class="stat-icon">⚠️</div>
+                                <div class="stat-info">
+                                    <h3>总错误数</h3>
+                                    <div class="stat-value" id="stat-total-errors">0</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="chart-grid">
+                            <div class="chart-card">
+                                <div class="chart-header">端点状态分布</div>
+                                <div id="endpoint-status-chart"></div>
+                            </div>
+                            <div class="chart-card">
+                                <div class="chart-header">Token 使用量</div>
+                                <div id="token-usage-chart"></div>
+                            </div>
+                            <div class="chart-card">
+                                <div class="chart-header">请求量统计</div>
+                                <div id="request-chart"></div>
+                            </div>
+                        </div>
+
+                        <div class="section">
+                            <h2>端点池概览</h2>
+                            <div id="pools-overview"></div>
+                        </div>
+
+                        <div class="section">
+                            <h2>API 接口</h2>
+                            <div id="apis-overview"></div>
+                        </div>
+
+                        <div class="section">
+                            <h2>端点状态</h2>
+                            <div id="endpoints-overview"></div>
                         </div>
                     </div>
-                    <div class="stat-card stat-card-accent">
-                        <div class="stat-icon">📊</div>
-                        <div class="stat-info">
-                            <h3>已用 Token</h3>
-                            <div class="stat-value" id="stat-used">0</div>
-                            <div class="stat-sub" id="stat-limit-sub">限额: 0</div>
+
+                    <!-- 端点管理 -->
+                    <div id="tab-endpoint-mgmt" class="tab-content">
+                        <div class="section">
+                            <div class="section-header">
+                                <h2>端点列表</h2>
+                                <button id="btn-add-endpoint" class="btn btn-primary btn-small">+ 添加端点</button>
+                            </div>
+                            <p style="font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 16px;">
+                                管理所有代理端点，添加 API Key 和配置。端点可在「池管理」中分组使用。
+                            </p>
+                            <div id="endpoints-list"></div>
                         </div>
                     </div>
-                    <div class="stat-card stat-card-accent">
-                        <div class="stat-icon">📈</div>
-                        <div class="stat-info">
-                            <h3>Token 使用率</h3>
-                            <div class="stat-value" id="stat-usage-rate">0%</div>
-                            <div class="progress-bar" style="height: 4px; margin-top: 8px;">
-                                <div class="progress-fill" id="stat-usage-bar" style="width: 0%"></div>
+
+                    <!-- 池管理 -->
+                    <div id="tab-pools" class="tab-content">
+                        <div class="section">
+                            <div class="section-header">
+                                <h2>端点池</h2>
+                                <button id="btn-add-pool" class="btn btn-primary btn-small">+ 添加池</button>
+                            </div>
+                            <p style="font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 16px;">
+                                端点池用于将多个端点分组，每个池可配置独立的调度算法。点击选择端点可添加端点到池中。
+                            </p>
+                            <div id="pools-list"></div>
+                        </div>
+                    </div>
+
+                    <!-- 接口管理 -->
+                    <div id="tab-api-mgmt" class="tab-content">
+                        <div class="section">
+                            <div class="section-header">
+                                <h2>对外接口</h2>
+                                <button id="btn-add-api" class="btn btn-primary btn-small">+ 添加接口</button>
+                            </div>
+                            <p style="font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 16px;">
+                                配置对外暴露的 API 接口，每个接口可关联到一个端点池，支持自定义前缀和独立认证。
+                            </p>
+                            <div id="apis-list"></div>
+                        </div>
+                    </div>
+
+                    <!-- 系统设置 -->
+                    <div id="tab-settings" class="tab-content">
+                        <div class="section">
+                            <h2>系统设置</h2>
+                            <p style="font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 16px;">
+                                接口类型、调度算法、API认证密钥等配置请在「端点管理」和「接口管理」菜单中分别设置。
+                            </p>
+                            <div style="display: flex; gap: 12px;">
+                                <button id="btn-change-password-settings" class="btn btn-secondary">修改密码</button>
+                                <button id="btn-reset-all" class="btn btn-danger">重置所有端点 Token</button>
                             </div>
                         </div>
                     </div>
-                    <div class="stat-card stat-card-accent">
-                        <div class="stat-icon">🔄</div>
-                        <div class="stat-info">
-                            <h3>总请求数</h3>
-                            <div class="stat-value" id="stat-requests">0</div>
-                            <div class="stat-sub" id="stat-errors-sub">错误: 0</div>
-                        </div>
-                    </div>
-                </div>
+                </main>
 
-                <div class="stats-grid" style="grid-template-columns: repeat(3, 1fr);">
-                    <div class="stat-card stat-card-accent">
-                        <div class="stat-icon">🔄</div>
-                        <div class="stat-info">
-                            <h3>端点池</h3>
-                            <div class="stat-value" id="stat-pools">0</div>
-                        </div>
-                    </div>
-                    <div class="stat-card stat-card-accent">
-                        <div class="stat-icon">🔗</div>
-                        <div class="stat-info">
-                            <h3>API 接口</h3>
-                            <div class="stat-value" id="stat-apis">0</div>
-                        </div>
-                    </div>
-                    <div class="stat-card stat-card-accent">
-                        <div class="stat-icon">⚠️</div>
-                        <div class="stat-info">
-                            <h3>总错误数</h3>
-                            <div class="stat-value" id="stat-total-errors">0</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="chart-grid">
-                    <div class="chart-card">
-                        <div class="chart-header">端点状态分布</div>
-                        <div id="endpoint-status-chart"></div>
-                    </div>
-                    <div class="chart-card">
-                        <div class="chart-header">Token 使用量</div>
-                        <div id="token-usage-chart"></div>
-                    </div>
-                    <div class="chart-card">
-                        <div class="chart-header">请求量统计</div>
-                        <div id="request-chart"></div>
-                    </div>
-                </div>
-
-                <div class="section">
-                    <h2>端点池概览</h2>
-                    <div id="pools-overview"></div>
-                </div>
-
-                <div class="section">
-                    <h2>API 接口</h2>
-                    <div id="apis-overview"></div>
-                </div>
-
-                <div class="section">
-                    <h2>端点状态</h2>
-                    <div id="endpoints-overview"></div>
-                </div>
-            </div>
-
-            <!-- 端点管理 -->
-            <div id="tab-endpoint-mgmt" class="tab-content">
-                <div class="section">
-                    <div class="section-header">
-                        <h2>端点列表</h2>
-                        <button id="btn-add-endpoint" class="btn btn-primary btn-small">+ 添加端点</button>
-                    </div>
-                    <p style="font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 16px;">
-                        管理所有代理端点，添加 API Key 和配置。端点可在「池管理」中分组使用。
-                    </p>
-                    <div id="endpoints-list"></div>
-                </div>
-            </div>
-
-            <!-- 池管理 -->
-            <div id="tab-pools" class="tab-content">
-                <div class="section">
-                    <div class="section-header">
-                        <h2>端点池</h2>
-                        <button id="btn-add-pool" class="btn btn-primary btn-small">+ 添加池</button>
-                    </div>
-                    <p style="font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 16px;">
-                        端点池用于将多个端点分组，每个池可配置独立的调度算法。点击选择端点可添加端点到池中。
-                    </p>
-                    <div id="pools-list"></div>
-                </div>
-            </div>
-
-            <!-- 接口管理 -->
-            <div id="tab-api-mgmt" class="tab-content">
-                <div class="section">
-                    <div class="section-header">
-                        <h2>对外接口</h2>
-                        <button id="btn-add-api" class="btn btn-primary btn-small">+ 添加接口</button>
-                    </div>
-                    <p style="font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 16px;">
-                        配置对外暴露的 API 接口，每个接口可关联到一个端点池，支持自定义前缀和独立认证。
-                    </p>
-                    <div id="apis-list"></div>
-                </div>
-            </div>
-
-            <!-- 系统设置 -->
-            <div id="tab-settings" class="tab-content">
-                <div class="section">
-                    <h2>系统设置</h2>
-                    <p style="font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 16px;">
-                        接口类型、调度算法、API认证密钥等配置请在「端点管理」和「接口管理」菜单中分别设置。
-                    </p>
-                    <div style="display: flex; gap: 12px;">
-                        <button id="btn-change-password-settings" class="btn">修改密码</button>
-                        <button id="btn-reset-all" class="btn btn-danger">重置所有端点 Token</button>
-                    </div>
-                </div>
+                <footer class="app-footer">
+                    Crafted by Artenx
+                </footer>
             </div>
         </div>
 
@@ -445,7 +463,7 @@
                             <option value="failover">轮换 (Failover)</option>
                             <option value="random">随机 (Random)</option>
                         </select>
-                        <div class="algo-description" id="pool-algo-desc" style="margin-top: 8px; padding: 12px; background: var(--bg-primary); border-radius: var(--radius-sm); font-size: 0.75rem; color: var(--text-secondary); line-height: 1.6;">
+                        <div class="algo-description" id="pool-algo-desc" style="margin-top: 8px; padding: 12px; border-radius: var(--radius-sm); font-size: 0.75rem; color: var(--text-secondary); line-height: 1.6;">
                             <div class="algo-item" data-algo="round_robin">
                                 <strong style="color: var(--accent);">轮询</strong> - 依次分配请求到每个端点，跳过已耗尽的端点。
                             </div>
@@ -496,7 +514,7 @@
                         <input type="number" id="pool-retry-count" value="1" min="1" max="10">
                         <small>每个端点的最大尝试次数。</small>
                     </div>
-                    <div id="pool-endpoints-mapping" style="display: none; margin-top: 16px; padding: 12px; background: var(--bg-primary); border-radius: var(--radius-sm);"></div>
+                    <div id="pool-endpoints-mapping" style="display: none; margin-top: 16px; padding: 12px; border-radius: var(--radius-sm);"></div>
                     <div class="form-actions">
                         <button type="button" class="btn modal-close">取消</button>
                         <button type="submit" class="btn btn-primary">保存</button>

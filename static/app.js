@@ -391,6 +391,23 @@ function initEventListeners() {
         poolRetryModeSelect.addEventListener('change', () => updateRetryModeDescription());
     }
 
+    // 移动端侧边栏切换
+    const menuToggle = document.getElementById('menu-toggle');
+    const sidebar = document.querySelector('.sidebar');
+    if (menuToggle && sidebar) {
+        menuToggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            sidebar.classList.toggle('open');
+        });
+
+        // 点击主内容区关闭移动端侧边栏
+        document.addEventListener('click', (e) => {
+            if (sidebar.classList.contains('open') && !sidebar.contains(e.target) && !menuToggle.contains(e.target)) {
+                sidebar.classList.remove('open');
+            }
+        });
+    }
+
     // 模态框关闭
     document.querySelectorAll('.modal-close').forEach(btn => {
         btn.addEventListener('click', () => {
