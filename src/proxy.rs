@@ -7,6 +7,15 @@ use futures_util::StreamExt;
 use serde_json::Value;
 use tracing::{debug, error, warn};
 
+/// 截断上游错误响应体，防止敏感信息通过错误消息泄露给客户端
+fn sanitize_error_body(body: &str) -> String {
+    if body.len() > 200 {
+        format!("{}...(已截断)", &body[..200])
+    } else {
+        body.to_string()
+    }
+}
+
 /// 已知的错误关键词（用于检测纯文本错误内容）
 const ERROR_KEYWORDS: &[&str] = &[
     "请求负载过高",
@@ -456,10 +465,11 @@ pub async fn forward_stream_request(
             let error_body = response.text().await.unwrap_or_default();
             warn!("端点 {} 返回错误状态 {}: {}", endpoint.config.name, resp_status, error_body);
             state.increment_endpoint_errors(&endpoint_id);
+            let sanitized = sanitize_error_body(&error_body);
             let e = if resp_status.is_client_error() && resp_status.as_u16() != 429 {
-                AppError::UpstreamError(format!("上游返回状态 {}: {}", resp_status, error_body))
+                AppError::UpstreamError(format!("上游返回状态 {}: {}", resp_status, sanitized))
             } else {
-                AppError::Proxy(format!("上游返回状态 {}: {}", resp_status, error_body))
+                AppError::Proxy(format!("上游返回状态 {}: {}", resp_status, sanitized))
             };
             if !ctx.record_error(e) { break; }
             continue;
@@ -640,10 +650,11 @@ async fn forward_to_endpoint(
     if status != 200 {
         let error_body = response.text().await.unwrap_or_default();
         error!("端点 {} 返回错误状态 {}: {}", endpoint.config.name, status, error_body);
+        let sanitized = sanitize_error_body(&error_body);
         if status.is_client_error() && status.as_u16() != 429 {
-            return Err(AppError::UpstreamError(format!("上游返回状态 {}: {}", status, error_body)));
+            return Err(AppError::UpstreamError(format!("上游返回状态 {}: {}", status, sanitized)));
         }
-        return Err(AppError::Proxy(format!("上游返回状态 {}: {}", status, error_body)));
+        return Err(AppError::Proxy(format!("上游返回状态 {}: {}", status, sanitized)));
     }
 
     let response_body = response.bytes().await.map_err(|e| AppError::Proxy(format!("读取响应失败: {}", e)))?;
