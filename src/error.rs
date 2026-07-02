@@ -18,6 +18,18 @@ impl AppError {
     pub fn is_retryable(&self) -> bool {
         matches!(self, AppError::Proxy(_))
     }
+
+    /// 获取错误对应的HTTP状态码
+    pub fn status_code(&self) -> u16 {
+        match self {
+            AppError::Unauthorized => 401,
+            AppError::NotFound(_) => 404,
+            AppError::BadRequest(_) => 400,
+            AppError::UpstreamError(_) => 502,
+            AppError::Proxy(_) => 502,
+            AppError::Internal(_) => 500,
+        }
+    }
 }
 
 impl fmt::Display for AppError {

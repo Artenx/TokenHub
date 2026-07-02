@@ -23,24 +23,60 @@ async fn api_proxy(
     req: HttpRequest,
     body: web::Bytes,
 ) -> Result<HttpResponse, error::AppError> {
-    // API密钥认证
-    auth::check_api_auth(&state, &req)?;
+    use crate::models::ApiCallLog;
+    use chrono::Utc;
 
-    let path = req.uri().path();
+    let start = std::time::Instant::now();
+    let conn_info = req.connection_info();
+    let client_ip = conn_info.peer_addr().unwrap_or("unknown").to_string();
+    let method = req.method().to_string();
+    let path = req.uri().path().to_string();
     let query = req.uri().query().map(|q| format!("?{}", q)).unwrap_or_default();
     let full_path = format!("{}{}", path, query);
 
-    // 检查是否是流式请求（通过解析 JSON 的 stream 字段，避免子串误判）
-    let is_stream = serde_json::from_slice::<serde_json::Value>(&body)
-        .ok()
-        .and_then(|v| v.get("stream").and_then(|s| s.as_bool()))
-        .unwrap_or(false);
+    // 提前获取命中的 API 前缀，用于日志记录
+    let api_prefix = state.match_exposed_api(&path).map(|a| a.prefix);
 
-    if is_stream {
-        proxy::forward_stream_request(state.clone(), &req, body, &full_path).await
+    // API密钥认证
+    let auth_result = auth::check_api_auth(&state, &req);
+
+    let result = if let Err(e) = auth_result {
+        Err(e)
     } else {
-        proxy::forward_request(state.get_ref(), &req, body, &full_path).await
-    }
+        // 检查是否是流式请求（通过解析 JSON 的 stream 字段，避免子串误判）
+        let is_stream = serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("stream").and_then(|s| s.as_bool()))
+            .unwrap_or(false);
+
+        if is_stream {
+            proxy::forward_stream_request(state.clone(), &req, body, &full_path).await
+        } else {
+            proxy::forward_request(state.get_ref(), &req, body, &full_path).await
+        }
+    };
+
+    let duration_ms = start.elapsed().as_millis() as u64;
+    let (status_code, status, error_message) = match &result {
+        Ok(resp) => (resp.status().as_u16(), "success".to_string(), None),
+        Err(e) => (e.status_code(), "error".to_string(), Some(e.to_string())),
+    };
+
+    state.add_call_log(ApiCallLog {
+        timestamp: Utc::now(),
+        client_ip,
+        method,
+        path: full_path,
+        api_prefix,
+        endpoint_id: None,
+        endpoint_name: None,
+        status_code,
+        status,
+        error_message,
+        duration_ms,
+    });
+
+    result
 }
 
 /// 健康检查
@@ -82,14 +118,14 @@ async fn main() -> std::io::Result<()> {
 
     info!("监听地址: {}:{}", listen_addr, listen_port);
 
-    // 启动每日重置任务
+    // 启动自动重置任务（每日零点和每分钟检查请求次数）
     let reset_state = web::Data::new(app_state);
     let reset_clone = reset_state.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60)); // 每分钟检查一次
         loop {
             interval.tick().await;
-            reset_clone.check_daily_reset().await;
+            reset_clone.check_auto_reset().await;
         }
     });
 
@@ -181,6 +217,7 @@ async fn main() -> std::io::Result<()> {
             .route("/admin/api/config", web::get().to(admin::get_config))
             .route("/admin/api/config", web::put().to(admin::update_config))
             .route("/admin/api/stats", web::get().to(admin::get_stats))
+            .route("/admin/api/logs", web::get().to(admin::list_call_logs))
             // 静态文件（管理后台前端）
             .service(fs::Files::new("/admin", "static").index_file("index.html"))
             // API代理（必须放在最后，捕获所有其他路径）

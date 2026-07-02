@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TokenHub</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link rel="stylesheet" href="style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -30,7 +31,10 @@
                             <span class="hero-char" style="--i:10">粮</span>
                         </div>
                     </div>
-                    <h1>TokenHub</h1>
+                    <div class="login-logo">
+                        <img src="favicon.svg" alt="TokenHub">
+                        <h1>TokenHub</h1>
+                    </div>
                     <p class="subtitle">让Token自由更近一步</p>
                     <form id="login-form" aria-label="登录表单">
                         <div class="form-group">
@@ -47,6 +51,7 @@
         <div id="main-page" class="page" style="display:none">
             <aside class="sidebar">
                 <div class="sidebar-brand">
+                    <img src="favicon.svg" alt="TokenHub" class="brand-logo">
                     <h1>TokenHub</h1>
                     <span class="badge">v1.0</span>
                 </div>
@@ -55,6 +60,7 @@
                     <button class="nav-btn" data-tab="endpoint-mgmt" role="tab" aria-selected="false" aria-controls="tab-endpoint-mgmt">端点管理</button>
                     <button class="nav-btn" data-tab="pools" role="tab" aria-selected="false" aria-controls="tab-pools">池管理</button>
                     <button class="nav-btn" data-tab="api-mgmt" role="tab" aria-selected="false" aria-controls="tab-api-mgmt">接口管理</button>
+                    <button class="nav-btn" data-tab="call-logs" role="tab" aria-selected="false" aria-controls="tab-call-logs">调用日志</button>
                     <button class="nav-btn" data-tab="settings" role="tab" aria-selected="false" aria-controls="tab-settings">设置</button>
                 </nav>
                 <div class="sidebar-footer">
@@ -210,6 +216,41 @@
                         </div>
                     </div>
 
+                    <!-- 调用日志 -->
+                    <div id="tab-call-logs" class="tab-content">
+                        <div class="section">
+                            <div class="section-header">
+                                <h2>调用日志</h2>
+                                <button id="btn-refresh-logs" class="btn btn-primary btn-small">刷新</button>
+                            </div>
+                            <p style="font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 16px;">
+                                展示最近 50 次 API 调用记录，包括请求时间、调用方 IP、请求路径、响应状态和耗时。
+                            </p>
+                            <div class="table-responsive">
+                                <table class="data-table" id="call-logs-table">
+                                    <thead>
+                                        <tr>
+                                            <th>时间</th>
+                                            <th>调用方 IP</th>
+                                            <th>方法</th>
+                                            <th>路径</th>
+                                            <th>API 前缀</th>
+                                            <th>状态码</th>
+                                            <th>状态</th>
+                                            <th>耗时(ms)</th>
+                                            <th>错误信息</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="call-logs-body">
+                                        <tr>
+                                            <td colspan="9" style="text-align: center; color: var(--text-secondary);">暂无调用日志</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- 系统设置 -->
                     <div id="tab-settings" class="tab-content">
                         <div class="section">
@@ -331,6 +372,7 @@
                              <option value="manual">手动重置</option>
                              <option value="daily">零点自动重置</option>
                              <option value="Rolling5h">5小时滚动重置</option>
+                             <option value="minutely">每分钟自动重置</option>
                          </select>
                         <small id="ep-req-reset-hint" style="display:none;">请求次数无上限端点，无需设置重置方式</small>
                     </div>

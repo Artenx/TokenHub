@@ -117,6 +117,12 @@ body {
     font-weight: 500;
 }
 
+.brand-logo {
+    width: 1.75rem;
+    height: 1.75rem;
+    flex-shrink: 0;
+}
+
 .sidebar-nav {
     flex: 1;
     padding: 0.75rem;
@@ -221,6 +227,7 @@ nav {
 .nav-btn[data-tab="endpoint-mgmt"]::before { content: '▣'; }
 .nav-btn[data-tab="pools"]::before { content: '◫'; }
 .nav-btn[data-tab="api-mgmt"]::before { content: '◎'; }
+.nav-btn[data-tab="call-logs"]::before { content: '▤'; }
 .nav-btn[data-tab="settings"]::before { content: '⚙'; }
 
 /* === TABS === */
@@ -295,11 +302,24 @@ nav {
     50% { transform: translateY(-6px); }
 }
 
-.login-card h1 {
+.login-logo {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    margin-bottom: 0.25rem;
+}
+
+.login-logo img {
+    width: 2.25rem;
+    height: 2.25rem;
+}
+
+.login-logo h1 {
     font-size: 1.5rem;
     font-weight: 700;
     letter-spacing: -0.02em;
-    margin-bottom: 0.25rem;
+    margin-bottom: 0;
     color: var(--foreground);
     text-align: center;
 }
@@ -673,6 +693,65 @@ nav {
     justify-content: space-between;
     align-items: center;
     margin-bottom: 1rem;
+}
+
+/* === DATA TABLE === */
+.table-responsive {
+    overflow-x: auto;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--card);
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+}
+
+.data-table thead {
+    background: var(--bg-secondary);
+}
+
+.data-table th,
+.data-table td {
+    padding: 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+}
+
+.data-table th {
+    font-weight: 600;
+    color: var(--foreground);
+    text-transform: uppercase;
+    font-size: 0.6875rem;
+    letter-spacing: 0.05em;
+}
+
+.data-table td {
+    color: var(--text-secondary);
+}
+
+.data-table tbody tr:hover {
+    background: var(--bg-secondary);
+}
+
+.data-table .status-success {
+    color: var(--success);
+    font-weight: 500;
+}
+
+.data-table .status-error {
+    color: var(--danger);
+    font-weight: 500;
+}
+
+.data-table .log-error {
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* === ENDPOINT CARD === */

@@ -774,3 +774,18 @@ pub async fn toggle_exposed_api(
         .map_err(|e| AppError::Internal(e.to_string()))?;
     Ok(HttpResponse::Ok().json(api))
 }
+
+// ========== 调用日志管理 ==========
+
+/// 获取最近 50 条 API 调用日志
+pub async fn list_call_logs(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    let logs = state.get_call_logs();
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "success": true,
+        "logs": logs
+    })))
+}

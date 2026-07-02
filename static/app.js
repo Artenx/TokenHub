@@ -170,6 +170,12 @@ function initEventListeners() {
     // 登出
     document.getElementById('btn-logout').addEventListener('click', handleLogout);
 
+    // 调用日志刷新
+    const btnRefreshLogs = document.getElementById('btn-refresh-logs');
+    if (btnRefreshLogs) {
+        btnRefreshLogs.addEventListener('click', loadCallLogs);
+    }
+
     // 密码表单
     document.getElementById('password-form').addEventListener('submit', handleChangePassword);
 
@@ -1406,6 +1412,8 @@ function switchTab(tab) {
         loadPoolsPage();
     } else if (tab === 'api-mgmt') {
         loadApisPage();
+    } else if (tab === 'call-logs') {
+        loadCallLogs();
     }
 }
 
@@ -3164,4 +3172,63 @@ function escapeHtml(str) {
 function escapeAttr(str) {
     if (!str) return '';
     return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+}
+
+// 格式化日期时间（本地时间）
+function formatDateTime(isoString) {
+    if (!isoString) return '-';
+    const date = new Date(isoString);
+    if (isNaN(date.getTime())) return isoString;
+    const pad = n => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+// ========== 调用日志页面 ==========
+
+async function loadCallLogs() {
+    const tbody = document.getElementById('call-logs-body');
+    if (!tbody) return;
+
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--text-secondary);">加载中...</td></tr>';
+
+    try {
+        const res = await fetch(`${API_BASE}/logs`);
+        if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        renderCallLogs(data.logs || []);
+    } catch (e) {
+        console.error('加载调用日志失败:', e);
+        tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: var(--danger);">加载失败: ${escapeHtml(e.message)}</td></tr>`;
+    }
+}
+
+function renderCallLogs(logs) {
+    const tbody = document.getElementById('call-logs-body');
+    if (!tbody) return;
+
+    if (!logs || logs.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--text-secondary);">暂无调用日志</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = logs.map(log => {
+        const statusClass = log.status === 'success' ? 'status-success' : 'status-error';
+        const statusText = log.status === 'success' ? '成功' : '失败';
+        const errorMsg = log.error_message ? `<span class="log-error" title="${escapeAttr(log.error_message)}">${escapeHtml(log.error_message)}</span>` : '-';
+        return `
+            <tr>
+                <td>${escapeHtml(formatDateTime(log.timestamp))}</td>
+                <td>${escapeHtml(log.client_ip || '-')}</td>
+                <td>${escapeHtml(log.method || '-')}</td>
+                <td>${escapeHtml(log.path || '-')}</td>
+                <td>${escapeHtml(log.api_prefix || '-')}</td>
+                <td>${log.status_code || '-'}</td>
+                <td><span class="${statusClass}">${statusText}</span></td>
+                <td>${log.duration_ms !== undefined ? log.duration_ms : '-'}</td>
+                <td>${errorMsg}</td>
+            </tr>
+        `;
+    }).join('');
 }

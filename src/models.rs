@@ -69,6 +69,9 @@ pub enum ResetPolicy {
     /// 滚动5小时自动重置（仅统计最近5小时消耗）
     #[serde(rename = "Rolling5h", alias = "rolling5h")]
     Rolling5h,
+    /// 每分钟自动重置
+    #[serde(rename = "minutely")]
+    Minutely,
 }
 
 /// 代理端点配置
@@ -103,12 +106,19 @@ fn default_timeout() -> u64 {
     300
 }
 
+fn default_now() -> DateTime<Utc> {
+    Utc::now()
+}
+
 /// 端点运行时状态
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EndpointState {
     pub config: EndpointConfig,
     pub tokens_used: u64,
     pub last_reset: DateTime<Utc>,
+    /// 请求次数最后重置时间（用于每分钟等独立重置策略）
+    #[serde(default = "default_now")]
+    pub request_last_reset: DateTime<Utc>,
     pub last_used: Option<DateTime<Utc>>,
     pub error_count: u32,
     pub total_requests: u64,
@@ -124,10 +134,12 @@ pub struct EndpointState {
 
 impl EndpointState {
     pub fn new(config: EndpointConfig) -> Self {
+        let now = Utc::now();
         Self {
             config,
             tokens_used: 0,
-            last_reset: Utc::now(),
+            last_reset: now,
+            request_last_reset: now,
             last_used: None,
             error_count: 0,
             total_requests: 0,
@@ -269,12 +281,13 @@ impl EndpointState {
     pub fn reset_requests(&mut self) {
         self.requests_used = 0;
         self.request_history.clear();
-        self.last_reset = Utc::now();
+        self.request_last_reset = Utc::now();
     }
 
     pub fn reset(&mut self) {
         self.tokens_used = 0;
         self.last_reset = Utc::now();
+        self.request_last_reset = Utc::now();
         self.error_count = 0;
         self.token_history.clear();
         self.requests_used = 0;
@@ -540,4 +553,31 @@ pub struct PoolTestSummary {
     pub total: usize,
     pub success: usize,
     pub failed: usize,
+}
+
+/// API 调用日志条目
+#[derive(Debug, Clone, Serialize)]
+pub struct ApiCallLog {
+    /// 请求时间
+    pub timestamp: DateTime<Utc>,
+    /// 调用方 IP
+    pub client_ip: String,
+    /// HTTP 方法
+    pub method: String,
+    /// 请求路径（含查询参数）
+    pub path: String,
+    /// 命中的对外 API 前缀
+    pub api_prefix: Option<String>,
+    /// 实际使用的端点 ID
+    pub endpoint_id: Option<String>,
+    /// 实际使用的端点名称
+    pub endpoint_name: Option<String>,
+    /// HTTP 状态码
+    pub status_code: u16,
+    /// 响应状态：success / error
+    pub status: String,
+    /// 错误信息（失败时）
+    pub error_message: Option<String>,
+    /// 请求耗时（毫秒）
+    pub duration_ms: u64,
 }

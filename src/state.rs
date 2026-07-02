@@ -1,7 +1,7 @@
 use crate::models::*;
 use chrono::Utc;
 use parking_lot::RwLock;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -31,6 +31,8 @@ pub struct AppState {
     pub save_state_mutex: tokio::sync::Mutex<()>,
     /// 管理后台会话令牌集合
     pub admin_sessions: RwLock<HashSet<String>>,
+    /// 最近 API 调用日志（最多保留 50 条）
+    pub call_logs: RwLock<VecDeque<ApiCallLog>>,
 }
 
 impl AppState {
@@ -61,6 +63,7 @@ impl AppState {
             dirty: AtomicBool::new(false),
             save_state_mutex: tokio::sync::Mutex::new(()),
             admin_sessions: RwLock::new(HashSet::new()),
+            call_logs: RwLock::new(VecDeque::new()),
         };
 
         // 从 state.json 恢复运行时状态
@@ -590,6 +593,11 @@ impl AppState {
                         ep.last_reset = dt.with_timezone(&chrono::Utc);
                     }
                 }
+                if let Some(reset_str) = state_data.get("request_last_reset").and_then(|v| v.as_str()) {
+                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(reset_str) {
+                        ep.request_last_reset = dt.with_timezone(&chrono::Utc);
+                    }
+                }
                 if let Some(used_str) = state_data.get("last_used").and_then(|v| v.as_str()) {
                     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(used_str) {
                         ep.last_used = Some(dt.with_timezone(&chrono::Utc));
@@ -630,6 +638,7 @@ impl AppState {
                 (id.clone(), serde_json::json!({
                     "tokens_used": ep.tokens_used,
                     "last_reset": ep.last_reset,
+                    "request_last_reset": ep.request_last_reset,
                     "last_used": ep.last_used,
                     "error_count": ep.error_count,
                     "total_requests": ep.total_requests,
@@ -661,8 +670,8 @@ impl AppState {
         Ok(())
     }
 
-    /// 执行每日重置检查
-    pub async fn check_daily_reset(&self) {
+    /// 执行自动重置检查（每日零点和每分钟）
+    pub async fn check_auto_reset(&self) {
         let mut endpoints = self.endpoints.write();
         let now = Utc::now();
         let today = now.date_naive();
@@ -670,27 +679,42 @@ impl AppState {
         for ep in endpoints.values_mut() {
             let token_daily = ep.config.reset_policy == ResetPolicy::Daily && ep.config.token_limit > 0;
             let request_daily = ep.config.request_reset_policy == ResetPolicy::Daily && ep.config.request_limit > 0;
-            let needs_reset = ep.last_reset.date_naive() < today;
+            let request_minutely = ep.config.request_reset_policy == ResetPolicy::Minutely && ep.config.request_limit > 0;
 
-            if !needs_reset || (!token_daily && !request_daily) {
+            let needs_daily_reset = ep.last_reset.date_naive() < today && (token_daily || request_daily);
+            let current_minute = now.timestamp() / 60;
+            let reset_minute = ep.request_last_reset.timestamp() / 60;
+            let needs_minutely_reset = request_minutely && current_minute > reset_minute;
+
+            if !needs_daily_reset && !needs_minutely_reset {
                 continue;
             }
 
-            if token_daily {
+            if needs_daily_reset && token_daily {
                 ep.tokens_used = 0;
                 ep.token_history.clear();
                 self.mark_dirty();
                 info!("端点 {} 每日自动重置Token", ep.config.name);
             }
 
-            if request_daily {
+            if needs_daily_reset && request_daily {
                 ep.requests_used = 0;
                 ep.request_history.clear();
                 self.mark_dirty();
                 info!("端点 {} 请求次数每日自动重置", ep.config.name);
             }
 
-            ep.last_reset = now;
+            if needs_minutely_reset {
+                ep.requests_used = 0;
+                ep.request_history.clear();
+                ep.request_last_reset = now;
+                self.mark_dirty();
+                info!("端点 {} 请求次数每分钟自动重置", ep.config.name);
+            }
+
+            if needs_daily_reset {
+                ep.last_reset = now;
+            }
         }
     }
 
@@ -744,6 +768,22 @@ impl AppState {
     pub fn clear_other_admin_sessions(&self, except_token: &str) {
         let mut sessions = self.admin_sessions.write();
         sessions.retain(|token| token == except_token);
+    }
+
+    // ========== 调用日志管理 ==========
+
+    /// 添加一条 API 调用日志，最多保留 50 条最近记录
+    pub fn add_call_log(&self, log: ApiCallLog) {
+        let mut logs = self.call_logs.write();
+        logs.push_front(log);
+        while logs.len() > 50 {
+            logs.pop_back();
+        }
+    }
+
+    /// 获取最近 50 条 API 调用日志
+    pub fn get_call_logs(&self) -> Vec<ApiCallLog> {
+        self.call_logs.read().iter().cloned().collect()
     }
 
     // ========== 模型缓存管理 ==========
