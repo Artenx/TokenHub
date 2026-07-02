@@ -1,4 +1,4 @@
-# Token Pool
+# TokenHub
 
 > LLM API 接口池管理工具 — 多端点负载均衡、Token 限额管控
 
@@ -26,7 +26,7 @@
 #### 2. 编译
 
 ```bash
-cd token-pool
+cd tokenhub
 cargo build --release
 ```
 
@@ -34,24 +34,24 @@ cargo build --release
 
 ```bash
 # 创建部署目录
-mkdir -p /opt/token-pool
+mkdir -p /opt/tokenhub
 
 # 复制文件
-cp target/release/token-pool /opt/token-pool/
-cp -r static /opt/token-pool/
+cp target/release/tokenhub /opt/tokenhub/
+cp -r static /opt/tokenhub/
 
 # 安装 systemd 服务
-cp token-pool.service /etc/systemd/system/
+cp tokenhub.service /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable token-pool
-systemctl start token-pool
+systemctl enable tokenhub
+systemctl start tokenhub
 ```
 
 #### 4. 验证
 
 ```bash
 # 检查服务状态
-systemctl status token-pool
+systemctl status tokenhub
 
 # 健康检查
 curl http://localhost:8080/health
@@ -69,7 +69,7 @@ curl http://localhost:8080/health
 #### 2. 使用 Docker Compose（推荐）
 
 ```bash
-cd token-pool
+cd tokenhub
 
 # 创建数据目录
 mkdir -p data
@@ -88,22 +88,22 @@ docker-compose down
 
 ```bash
 # 构建镜像
-docker build -t token-pool .
+docker build -t tokenhub .
 
 # 运行容器
 docker run -d \
-  --name token-pool \
+  --name tokenhub \
   -p 8080:8080 \
   -v $(pwd)/data:/app/data \
   --restart unless-stopped \
-  token-pool
+  tokenhub
 ```
 
 #### 4. 验证
 
 ```bash
 # 检查容器状态
-docker ps | grep token-pool
+docker ps | grep tokenhub
 
 # 健康检查
 curl http://localhost:8080/health
@@ -133,7 +133,7 @@ curl http://your-ip:8080/your-prefix/chat/completions \
 
 ## 配置文件
 
-配置文件位于 `/opt/token-pool/config.toml`，首次启动自动生成。
+配置文件位于 `/opt/tokenhub/config.toml`，首次启动自动生成。
 
 ## 详细文档
 

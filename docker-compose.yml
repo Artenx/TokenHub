@@ -1,9 +1,9 @@
 version: '3.8'
 
 services:
-  token-pool:
+  tokenhub:
     build: .
-    container_name: token-pool
+    container_name: tokenhub
     ports:
       - "8080:8080"
     volumes:

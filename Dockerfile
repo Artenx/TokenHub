@@ -13,8 +13,7 @@ RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/
 
 WORKDIR /app
 
-COPY --from=builder /app/target/release/token-pool .
-COPY --from=builder /app/static ./static
+COPY --from=builder /app/target/release/tokenhub .
 
 RUN mkdir -p /app/data
 
@@ -23,4 +22,4 @@ EXPOSE 8080
 ENV RUST_LOG=info
 ENV CONFIG_PATH=/app/data/config.toml
 
-CMD ["./token-pool"]
+CMD ["./tokenhub"]

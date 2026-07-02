@@ -1,4 +1,4 @@
-# Token Pool
+# TokenHub
 
 > LLM API Pool Manager — Multi-endpoint load balancing & token quota management
 
@@ -26,7 +26,7 @@
 #### Build
 
 ```bash
-cd token-pool
+cd tokenhub
 cargo build --release
 ```
 
@@ -34,24 +34,24 @@ cargo build --release
 
 ```bash
 # Create deployment directory
-mkdir -p /opt/token-pool
+mkdir -p /opt/tokenhub
 
 # Copy files
-cp target/release/token-pool /opt/token-pool/
-cp -r static /opt/token-pool/
+cp target/release/tokenhub /opt/tokenhub/
+cp -r static /opt/tokenhub/
 
 # Install systemd service
-cp token-pool.service /etc/systemd/system/
+cp tokenhub.service /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable token-pool
-systemctl start token-pool
+systemctl enable tokenhub
+systemctl start tokenhub
 ```
 
 #### Verify
 
 ```bash
 # Check service status
-systemctl status token-pool
+systemctl status tokenhub
 
 # Health check
 curl http://localhost:8080/health
@@ -69,7 +69,7 @@ curl http://localhost:8080/health
 #### Docker Compose (recommended)
 
 ```bash
-cd token-pool
+cd tokenhub
 
 # Create data directory
 mkdir -p data
@@ -88,22 +88,22 @@ docker-compose down
 
 ```bash
 # Build image
-docker build -t token-pool .
+docker build -t tokenhub .
 
 # Run container
 docker run -d \
-  --name token-pool \
+  --name tokenhub \
   -p 8080:8080 \
   -v $(pwd)/data:/app/data \
   --restart unless-stopped \
-  token-pool
+  tokenhub
 ```
 
 #### Verify
 
 ```bash
 # Check container status
-docker ps | grep token-pool
+docker ps | grep tokenhub
 
 # Health check
 curl http://localhost:8080/health
@@ -133,7 +133,7 @@ curl http://your-ip:8080/your-prefix/chat/completions \
 
 ## Configuration
 
-Config file is located at `/opt/token-pool/config.toml`, auto-generated on first startup.
+Config file is located at `/opt/tokenhub/config.toml`, auto-generated on first startup.
 
 ## Documentation
 

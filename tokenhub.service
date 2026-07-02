@@ -1,0 +1,15 @@
+[Unit]
+Description=TokenHub - LLM API Token Pool Manager
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/tokenhub
+ExecStart=/opt/tokenhub/tokenhub
+Environment=RUST_LOG=info
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

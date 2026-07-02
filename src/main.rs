@@ -47,7 +47,7 @@ async fn api_proxy(
 async fn health_check() -> HttpResponse {
     HttpResponse::Ok().json(serde_json::json!({
         "status": "ok",
-        "service": "token-pool"
+        "service": "tokenhub"
     }))
 }
 
@@ -64,11 +64,11 @@ async fn main() -> std::io::Result<()> {
     fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("info,token_pool=debug")),
+                .unwrap_or_else(|_| EnvFilter::new("info,tokenhub=debug")),
         )
         .init();
 
-    info!("正在启动 Token Pool Proxy...");
+    info!("正在启动 TokenHub...");
 
     // 加载配置
     let config_path = std::env::var("CONFIG_PATH").ok();

@@ -1,5 +1,5 @@
 [package]
-name = "token-pool"
+name = "tokenhub"
 version = "0.1.0"
 edition = "2021"
 description = "Token pool proxy for LLM API endpoints"
