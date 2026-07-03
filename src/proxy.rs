@@ -46,33 +46,13 @@ fn check_content_error(content: &str) -> Option<(String, String)> {
 
 /// 检查单个 JSON 对象是否为错误响应（兼容多种接口类型）
 fn check_json_error(json: &Value) -> Option<(String, String)> {
-    // 跳过正常响应（有 choices 或 id 字段），但检查 choices 中的 content
-    if json.get("choices").is_some() || json.get("id").is_some() {
-        if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
-            for choice in choices {
-                let content = choice
-                    .get("delta").and_then(|d| d.get("content")).and_then(|c| c.as_str())
-                    .or_else(|| choice.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_str()));
-                if let Some(content) = content {
-                    if let Some(json_start) = content.find('{') {
-                        let json_part = &content[json_start..];
-                        if let Ok(err_json) = serde_json::from_str::<Value>(json_part) {
-                            if err_json.get("error").is_some() {
-                                let msg = err_json["error"].get("message")
-                                    .and_then(|m| m.as_str()).unwrap_or("未知错误").to_string();
-                                let code = err_json["error"].get("code")
-                                    .map(|c| c.to_string()).unwrap_or_default();
-                                return Some((code, msg));
-                            }
-                        }
-                    }
-                    if let Some(err) = check_content_error(content) {
-                        return Some(err);
-                    }
-                }
-            }
+    // Anthropic 错误: {"type": "error", "error": {"type": "...", "message": "..."}}
+    if json.get("type").and_then(|v| v.as_str()) == Some("error") {
+        if let Some(error_obj) = json.get("error") {
+            let msg = error_obj.get("message").and_then(|m| m.as_str()).unwrap_or("未知错误").to_string();
+            let code = error_obj.get("type").and_then(|c| c.as_str()).unwrap_or("error").to_string();
+            return Some((code, msg));
         }
-        return None;
     }
 
     // OpenAI 格式: {"error": {"code": "...", "message": "..."}}
@@ -93,6 +73,32 @@ fn check_json_error(json: &Value) -> Option<(String, String)> {
     if let (Some(status), Some(title)) = (json.get("status"), json.get("title")) {
         if status.is_number() {
             return Some((status.to_string(), title.as_str().unwrap_or("未知错误").to_string()));
+        }
+    }
+
+    // 正常响应，但检查 choices content 中是否嵌入了错误 JSON
+    if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
+        for choice in choices {
+            let content = choice
+                .get("delta").and_then(|d| d.get("content")).and_then(|c| c.as_str())
+                .or_else(|| choice.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_str()));
+            if let Some(content) = content {
+                if let Some(json_start) = content.find('{') {
+                    let json_part = &content[json_start..];
+                    if let Ok(err_json) = serde_json::from_str::<Value>(json_part) {
+                        if err_json.get("error").is_some() {
+                            let msg = err_json["error"].get("message")
+                                .and_then(|m| m.as_str()).unwrap_or("未知错误").to_string();
+                            let code = err_json["error"].get("code")
+                                .map(|c| c.to_string()).unwrap_or_default();
+                            return Some((code, msg));
+                        }
+                    }
+                }
+                if let Some(err) = check_content_error(content) {
+                    return Some(err);
+                }
+            }
         }
     }
 
