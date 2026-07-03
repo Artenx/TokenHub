@@ -228,6 +228,7 @@ nav {
 .nav-btn[data-tab="pools"]::before { content: '◫'; }
 .nav-btn[data-tab="api-mgmt"]::before { content: '◎'; }
 .nav-btn[data-tab="call-logs"]::before { content: '▤'; }
+.nav-btn[data-tab="latency-leaderboard"]::before { content: '⏱'; }
 .nav-btn[data-tab="settings"]::before { content: '⚙'; }
 
 /* === TABS === */
