@@ -814,6 +814,9 @@ nav {
     color: var(--foreground);
     font-family: var(--font-mono);
     font-size: 0.8125rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .endpoint-actions {
