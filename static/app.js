@@ -1942,7 +1942,7 @@ function searchModels(query) {
 
 // 显示/隐藏页面
 function showLoginPage() {
-    document.getElementById('login-page').style.display = 'block';
+    document.getElementById('login-page').style.display = 'flex';
     document.getElementById('main-page').style.display = 'none';
 }
 
