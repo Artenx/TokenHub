@@ -9,7 +9,7 @@ use std::time::Instant;
 use tracing::{debug, info, warn};
 
 /// IP 限流条目
-struct RateLimitEntry {
+pub(crate) struct RateLimitEntry {
     window_start: Instant,
     count: u64,
     blocked_until: Option<Instant>,

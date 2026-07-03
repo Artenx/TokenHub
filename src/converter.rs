@@ -1317,7 +1317,8 @@ mod tests {
     #[test]
     fn test_response_error_anthropic_to_others() {
         let body = serde_json::json!({
-            "error": {"type": "error", "message": "Rate limited"}
+            "type": "error",
+            "error": {"type": "overloaded_error", "message": "Rate limited"}
         });
         let result = convert_response(&body, &ApiType::Anthropic, &ApiType::OpenAI);
         assert_eq!(result["error"]["message"], "Rate limited");
