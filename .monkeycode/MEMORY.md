@@ -33,6 +33,7 @@ Agent 在任务执行过程中发现的条目应遵循以下格式：
 
 ### 修改后自动推送到 main 分支
 - Date: 2026-07-03
-- Context: TokenHub 项目前端优化任务完成后
+- Context: 用户明确指示，完成代码修改后直接推送到 main 分支，不再创建功能分支或 Merge Request
 - Instructions:
-  - 每次修改完成后，自动 git add、commit 并 push 到 origin/main 分支
+  - 每次修改完成后，执行 git add、commit 并直接 push 到 origin/main 分支
+  - 不创建临时功能分支，不通过 Merge Request 合并
