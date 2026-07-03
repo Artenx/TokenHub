@@ -851,10 +851,29 @@ impl StreamConverter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::ApiType;
 
+    // ========== 请求转换测试 ==========
+
+    /// OpenAI -> OpenAI（同类型，应原样返回）
     #[test]
-    fn test_openai_to_anthropic() {
-        let openai_body = serde_json::json!({
+    fn test_request_openai_to_openai() {
+        let body = serde_json::json!({
+            "model": "gpt-4",
+            "messages": [
+                {"role": "system", "content": "You are helpful."},
+                {"role": "user", "content": "Hello"}
+            ],
+            "max_tokens": 100
+        });
+        let result = convert_request(&body, &ApiType::OpenAI, &ApiType::OpenAI);
+        assert_eq!(result, body);
+    }
+
+    /// OpenAI -> Anthropic
+    #[test]
+    fn test_request_openai_to_anthropic() {
+        let body = serde_json::json!({
             "model": "gpt-4",
             "messages": [
                 {"role": "system", "content": "You are helpful."},
@@ -863,37 +882,58 @@ mod tests {
             "max_tokens": 100,
             "temperature": 0.7
         });
-
-        let unified = parse_openai(&openai_body);
-        let anthropic_body = to_anthropic(&unified);
-
-        assert_eq!(anthropic_body["model"], "gpt-4");
-        assert_eq!(anthropic_body["system"], "You are helpful.");
-        assert_eq!(anthropic_body["messages"][0]["role"], "user");
-        assert_eq!(anthropic_body["messages"][0]["content"], "Hello");
-        assert_eq!(anthropic_body["max_tokens"], 100);
+        let result = convert_request(&body, &ApiType::OpenAI, &ApiType::Anthropic);
+        assert_eq!(result["model"], "gpt-4");
+        assert_eq!(result["system"], "You are helpful.");
+        assert_eq!(result["messages"][0]["role"], "user");
+        assert_eq!(result["messages"][0]["content"], "Hello");
+        assert_eq!(result["max_tokens"], 100);
     }
 
+    /// OpenAI -> OpenAIResponses
     #[test]
-    fn test_openai_responses_to_openai() {
-        let responses_body = serde_json::json!({
-            "model": "mimo-v2-pro",
-            "input": "Hello",
-            "max_output_tokens": 100
+    fn test_request_openai_to_openai_responses() {
+        let body = serde_json::json!({
+            "model": "gpt-4",
+            "messages": [
+                {"role": "system", "content": "Be helpful."},
+                {"role": "user", "content": "Hi"}
+            ],
+            "max_tokens": 200
         });
-
-        let unified = parse_openai_responses(&responses_body);
-        let openai_body = to_openai(&unified);
-
-        assert_eq!(openai_body["model"], "mimo-v2-pro");
-        assert_eq!(openai_body["messages"][0]["role"], "user");
-        assert_eq!(openai_body["messages"][0]["content"], "Hello");
-        assert_eq!(openai_body["max_tokens"], 100);
+        let result = convert_request(&body, &ApiType::OpenAI, &ApiType::OpenAIResponses);
+        assert_eq!(result["model"], "gpt-4");
+        assert_eq!(result["instructions"], "Be helpful.");
+        assert_eq!(result["max_output_tokens"], 200);
+        // input 是单条 user 消息时为字符串
+        assert_eq!(result["input"], "Hi");
     }
 
+    /// OpenAI -> OpenAIResponses（多条消息，input 应为数组）
     #[test]
-    fn test_anthropic_to_openai() {
-        let anthropic_body = serde_json::json!({
+    fn test_request_openai_to_openai_responses_multi_msg() {
+        let body = serde_json::json!({
+            "model": "gpt-4",
+            "messages": [
+                {"role": "system", "content": "System prompt."},
+                {"role": "user", "content": "Question 1"},
+                {"role": "user", "content": "Question 2"}
+            ],
+            "max_tokens": 100
+        });
+        let result = convert_request(&body, &ApiType::OpenAI, &ApiType::OpenAIResponses);
+        assert_eq!(result["model"], "gpt-4");
+        assert_eq!(result["instructions"], "System prompt.");
+        let input_arr = result["input"].as_array().unwrap();
+        assert_eq!(input_arr.len(), 2);
+        assert_eq!(input_arr[0]["content"], "Question 1");
+        assert_eq!(input_arr[1]["content"], "Question 2");
+    }
+
+    /// Anthropic -> OpenAI
+    #[test]
+    fn test_request_anthropic_to_openai() {
+        let body = serde_json::json!({
             "model": "claude-3",
             "system": "Be helpful",
             "messages": [
@@ -901,14 +941,478 @@ mod tests {
             ],
             "max_tokens": 200
         });
+        let result = convert_request(&body, &ApiType::Anthropic, &ApiType::OpenAI);
+        assert_eq!(result["model"], "claude-3");
+        // system 被合并为 messages 的第一条
+        assert_eq!(result["messages"][0]["role"], "system");
+        assert_eq!(result["messages"][0]["content"], "Be helpful");
+        assert_eq!(result["messages"][1]["role"], "user");
+        assert_eq!(result["messages"][1]["content"], "Hi");
+    }
 
-        let unified = parse_anthropic(&anthropic_body);
-        let openai_body = to_openai(&unified);
+    /// Anthropic -> Anthropic（同类型，原样返回）
+    #[test]
+    fn test_request_anthropic_to_anthropic() {
+        let body = serde_json::json!({
+            "model": "claude-3",
+            "system": "Helpful",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 300
+        });
+        let result = convert_request(&body, &ApiType::Anthropic, &ApiType::Anthropic);
+        assert_eq!(result, body);
+    }
 
-        assert_eq!(openai_body["model"], "claude-3");
-        assert_eq!(openai_body["messages"][0]["role"], "system");
-        assert_eq!(openai_body["messages"][0]["content"], "Be helpful");
-        assert_eq!(openai_body["messages"][1]["role"], "user");
-        assert_eq!(openai_body["messages"][1]["content"], "Hi");
+    /// Anthropic -> OpenAIResponses
+    #[test]
+    fn test_request_anthropic_to_openai_responses() {
+        let body = serde_json::json!({
+            "model": "claude-3",
+            "system": "I am an assistant",
+            "messages": [
+                {"role": "user", "content": [{"type": "text", "text": "Hello"}]}
+            ],
+            "max_tokens": 150
+        });
+        let result = convert_request(&body, &ApiType::Anthropic, &ApiType::OpenAIResponses);
+        assert_eq!(result["model"], "claude-3");
+        assert_eq!(result["instructions"], "I am an assistant");
+        assert_eq!(result["max_output_tokens"], 150);
+        assert_eq!(result["input"], "Hello");
+    }
+
+    /// OpenAIResponses -> OpenAI
+    #[test]
+    fn test_request_openai_responses_to_openai() {
+        let body = serde_json::json!({
+            "model": "gpt-4o",
+            "input": "Hello world",
+            "instructions": "Be concise",
+            "max_output_tokens": 100
+        });
+        let result = convert_request(&body, &ApiType::OpenAIResponses, &ApiType::OpenAI);
+        assert_eq!(result["model"], "gpt-4o");
+        assert_eq!(result["max_tokens"], 100);
+        assert_eq!(result["messages"][0]["role"], "system");
+        assert_eq!(result["messages"][0]["content"], "Be concise");
+        assert_eq!(result["messages"][1]["role"], "user");
+        assert_eq!(result["messages"][1]["content"], "Hello world");
+    }
+
+    /// OpenAIResponses -> OpenAIResponses（同类型，原样返回）
+    #[test]
+    fn test_request_openai_responses_to_openai_responses() {
+        let body = serde_json::json!({
+            "model": "gpt-4o",
+            "input": "Hi",
+            "max_output_tokens": 50
+        });
+        let result = convert_request(&body, &ApiType::OpenAIResponses, &ApiType::OpenAIResponses);
+        assert_eq!(result, body);
+    }
+
+    /// OpenAIResponses -> Anthropic
+    #[test]
+    fn test_request_openai_responses_to_anthropic() {
+        let body = serde_json::json!({
+            "model": "gpt-4o",
+            "input": "Hello there",
+            "instructions": "Helpful assistant",
+            "max_output_tokens": 256
+        });
+        let result = convert_request(&body, &ApiType::OpenAIResponses, &ApiType::Anthropic);
+        assert_eq!(result["model"], "gpt-4o");
+        assert_eq!(result["system"], "Helpful assistant");
+        assert_eq!(result["messages"][0]["role"], "user");
+        assert_eq!(result["messages"][0]["content"], "Hello there");
+        assert_eq!(result["max_tokens"], 256);
+    }
+
+    /// OpenAIResponses -> Anthropic（input 为数组）
+    #[test]
+    fn test_request_openai_responses_to_anthropic_array_input() {
+        let body = serde_json::json!({
+            "model": "gpt-4o",
+            "input": [
+                {"role": "user", "content": "First question"},
+                {"role": "user", "content": "Second question"}
+            ],
+            "instructions": "System here"
+        });
+        let result = convert_request(&body, &ApiType::OpenAIResponses, &ApiType::Anthropic);
+        assert_eq!(result["system"], "System here");
+        let msgs = result["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0]["role"], "user");
+        assert_eq!(msgs[0]["content"], "First question");
+        assert_eq!(msgs[1]["role"], "user");
+        assert_eq!(msgs[1]["content"], "Second question");
+    }
+
+    // ========== 响应转换测试 ==========
+
+    /// OpenAI 响应 -> OpenAI 响应（同类型，原样返回）
+    #[test]
+    fn test_response_openai_to_openai() {
+        let body = serde_json::json!({
+            "id": "chatcmpl-123",
+            "model": "gpt-4",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "Hello!"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        });
+        let result = convert_response(&body, &ApiType::OpenAI, &ApiType::OpenAI);
+        assert_eq!(result, body);
+    }
+
+    /// OpenAI 响应 -> Anthropic 响应
+    #[test]
+    fn test_response_openai_to_anthropic() {
+        let body = serde_json::json!({
+            "id": "chatcmpl-abc",
+            "model": "gpt-4",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "I can help!"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 20, "completion_tokens": 8, "total_tokens": 28}
+        });
+        let result = convert_response(&body, &ApiType::OpenAI, &ApiType::Anthropic);
+        assert_eq!(result["type"], "message");
+        assert_eq!(result["role"], "assistant");
+        assert_eq!(result["model"], "gpt-4");
+        let content = result["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "I can help!");
+        assert_eq!(result["stop_reason"], "end_turn");
+        assert_eq!(result["usage"]["input_tokens"], 20);
+        assert_eq!(result["usage"]["output_tokens"], 8);
+    }
+
+    /// OpenAI 响应 -> OpenAIResponses 响应
+    #[test]
+    fn test_response_openai_to_openai_responses() {
+        let body = serde_json::json!({
+            "id": "chatcmpl-xyz",
+            "model": "gpt-4",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "Sure thing!"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+        });
+        let result = convert_response(&body, &ApiType::OpenAI, &ApiType::OpenAIResponses);
+        assert_eq!(result["model"], "gpt-4");
+        assert_eq!(result["status"], "completed");
+        let output = result["output"].as_array().unwrap();
+        assert_eq!(output[0]["type"], "message");
+        let out_content = output[0]["content"].as_array().unwrap();
+        assert_eq!(out_content[0]["type"], "output_text");
+        assert_eq!(out_content[0]["text"], "Sure thing!");
+        assert_eq!(result["usage"]["input_tokens"], 5);
+        assert_eq!(result["usage"]["output_tokens"], 3);
+    }
+
+    /// OpenAI 响应 -> Anthropic（finish_reason=length → max_tokens）
+    #[test]
+    fn test_response_openai_length_to_anthropic() {
+        let body = serde_json::json!({
+            "id": "chatcmpl-len",
+            "model": "gpt-4",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "truncated..."},
+                "finish_reason": "length"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 100, "total_tokens": 110}
+        });
+        let result = convert_response(&body, &ApiType::OpenAI, &ApiType::Anthropic);
+        assert_eq!(result["stop_reason"], "max_tokens");
+    }
+
+    /// Anthropic 响应 -> Anthropic 响应（同类型，原样返回）
+    #[test]
+    fn test_response_anthropic_to_anthropic() {
+        let body = serde_json::json!({
+            "id": "msg_123",
+            "model": "claude-3",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Hello!"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 5, "output_tokens": 3}
+        });
+        let result = convert_response(&body, &ApiType::Anthropic, &ApiType::Anthropic);
+        assert_eq!(result, body);
+    }
+
+    /// Anthropic 响应 -> OpenAI 响应
+    #[test]
+    fn test_response_anthropic_to_openai() {
+        let body = serde_json::json!({
+            "id": "msg_456",
+            "model": "claude-3",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "I'm Claude!"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 15, "output_tokens": 10}
+        });
+        let result = convert_response(&body, &ApiType::Anthropic, &ApiType::OpenAI);
+        assert_eq!(result["object"], "chat.completion");
+        assert_eq!(result["model"], "claude-3");
+        let choices = result["choices"].as_array().unwrap();
+        assert_eq!(choices[0]["message"]["role"], "assistant");
+        assert_eq!(choices[0]["message"]["content"], "I'm Claude!");
+        assert_eq!(choices[0]["finish_reason"], "stop");
+        assert_eq!(result["usage"]["prompt_tokens"], 15);
+        assert_eq!(result["usage"]["completion_tokens"], 10);
+    }
+
+    /// Anthropic 响应 -> OpenAI 响应（max_tokens → length）
+    #[test]
+    fn test_response_anthropic_max_tokens_to_openai() {
+        let body = serde_json::json!({
+            "id": "msg_max",
+            "model": "claude-3",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "cut off"}],
+            "stop_reason": "max_tokens",
+            "usage": {"input_tokens": 5, "output_tokens": 200}
+        });
+        let result = convert_response(&body, &ApiType::Anthropic, &ApiType::OpenAI);
+        assert_eq!(result["choices"][0]["finish_reason"], "length");
+    }
+
+    /// Anthropic 响应 -> OpenAIResponses 响应
+    #[test]
+    fn test_response_anthropic_to_openai_responses() {
+        let body = serde_json::json!({
+            "id": "msg_789",
+            "model": "claude-3",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Response text"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 8, "output_tokens": 12}
+        });
+        let result = convert_response(&body, &ApiType::Anthropic, &ApiType::OpenAIResponses);
+        assert_eq!(result["model"], "claude-3");
+        assert_eq!(result["status"], "completed");
+        let output = result["output"].as_array().unwrap();
+        assert_eq!(output[0]["type"], "message");
+        let out_text = &output[0]["content"][0];
+        assert_eq!(out_text["type"], "output_text");
+        assert_eq!(out_text["text"], "Response text");
+        assert_eq!(result["usage"]["input_tokens"], 8);
+        assert_eq!(result["usage"]["output_tokens"], 12);
+    }
+
+    /// OpenAIResponses 响应 -> OpenAIResponses 响应（同类型，原样返回）
+    #[test]
+    fn test_response_openai_responses_to_openai_responses() {
+        let body = serde_json::json!({
+            "id": "resp_123",
+            "model": "gpt-4o",
+            "status": "completed",
+            "output": [{
+                "type": "message",
+                "content": [{"type": "output_text", "text": "Result"}]
+            }],
+            "usage": {"input_tokens": 10, "output_tokens": 5}
+        });
+        let result = convert_response(&body, &ApiType::OpenAIResponses, &ApiType::OpenAIResponses);
+        assert_eq!(result, body);
+    }
+
+    /// OpenAIResponses 响应 -> OpenAI 响应
+    #[test]
+    fn test_response_openai_responses_to_openai() {
+        let body = serde_json::json!({
+            "id": "resp_456",
+            "model": "gpt-4o",
+            "status": "completed",
+            "output": [{
+                "type": "message",
+                "content": [{"type": "output_text", "text": "Done!"}]
+            }],
+            "usage": {"input_tokens": 7, "output_tokens": 4}
+        });
+        let result = convert_response(&body, &ApiType::OpenAIResponses, &ApiType::OpenAI);
+        assert_eq!(result["model"], "gpt-4o");
+        let choices = result["choices"].as_array().unwrap();
+        assert_eq!(choices[0]["message"]["content"], "Done!");
+        assert_eq!(choices[0]["finish_reason"], "stop");
+        assert_eq!(result["usage"]["prompt_tokens"], 7);
+        assert_eq!(result["usage"]["completion_tokens"], 4);
+    }
+
+    /// OpenAIResponses 响应 -> Anthropic 响应
+    #[test]
+    fn test_response_openai_responses_to_anthropic() {
+        let body = serde_json::json!({
+            "id": "resp_789",
+            "model": "gpt-4o",
+            "status": "completed",
+            "output": [{
+                "type": "message",
+                "content": [{"type": "output_text", "text": "Anthropic output"}]
+            }],
+            "usage": {"input_tokens": 12, "output_tokens": 6}
+        });
+        let result = convert_response(&body, &ApiType::OpenAIResponses, &ApiType::Anthropic);
+        assert_eq!(result["type"], "message");
+        assert_eq!(result["role"], "assistant");
+        assert_eq!(result["model"], "gpt-4o");
+        assert_eq!(result["stop_reason"], "end_turn");
+        assert_eq!(result["content"][0]["type"], "text");
+        assert_eq!(result["content"][0]["text"], "Anthropic output");
+        assert_eq!(result["usage"]["input_tokens"], 12);
+        assert_eq!(result["usage"]["output_tokens"], 6);
+    }
+
+    // ========== 路径转换测试 ==========
+
+    #[test]
+    fn test_convert_path_openai_to_anthropic() {
+        let result = convert_path("chat/completions", &ApiType::OpenAI, &ApiType::Anthropic);
+        assert_eq!(result, "messages");
+    }
+
+    #[test]
+    fn test_convert_path_anthropic_to_openai() {
+        let result = convert_path("messages", &ApiType::Anthropic, &ApiType::OpenAI);
+        assert_eq!(result, "chat/completions");
+    }
+
+    #[test]
+    fn test_convert_path_openai_to_openai_responses() {
+        let result = convert_path("chat/completions", &ApiType::OpenAI, &ApiType::OpenAIResponses);
+        assert_eq!(result, "responses");
+    }
+
+    #[test]
+    fn test_convert_path_same_type() {
+        let result = convert_path("chat/completions", &ApiType::OpenAI, &ApiType::OpenAI);
+        assert_eq!(result, "chat/completions");
+    }
+
+    // ========== 错误响应转换 ==========
+
+    #[test]
+    fn test_response_error_openai_to_others() {
+        let body = serde_json::json!({
+            "error": {"message": "Invalid API key", "type": "auth_error", "code": "invalid_api_key"}
+        });
+        let result = convert_response(&body, &ApiType::OpenAI, &ApiType::Anthropic);
+        assert_eq!(result["error"]["message"], "Invalid API key");
+    }
+
+    #[test]
+    fn test_response_error_anthropic_to_others() {
+        let body = serde_json::json!({
+            "error": {"type": "error", "message": "Rate limited"}
+        });
+        let result = convert_response(&body, &ApiType::Anthropic, &ApiType::OpenAI);
+        assert_eq!(result["error"]["message"], "Rate limited");
+    }
+
+    // ========== 流式转换测试 ==========
+
+    #[test]
+    fn test_stream_openai_to_anthropic() {
+        let mut converter = StreamConverter::new(
+            crate::models::ApiType::OpenAI,
+            crate::models::ApiType::Anthropic,
+        );
+        let chunk = serde_json::json!({
+            "choices": [{"index": 0, "delta": {"content": "Hello"}, "finish_reason": null}]
+        });
+        let lines = converter.convert_chunk(&format!("data: {}", serde_json::to_string(&chunk).unwrap()));
+        let text = lines.join("");
+        assert!(text.contains("content_block_delta"));
+        assert!(text.contains("\"text\":\"Hello\""));
+    }
+
+    #[test]
+    fn test_stream_anthropic_to_openai() {
+        let mut converter = StreamConverter::new(
+            crate::models::ApiType::Anthropic,
+            crate::models::ApiType::OpenAI,
+        );
+        let chunk = serde_json::json!({
+            "type": "content_block_delta",
+            "delta": {"type": "text_delta", "text": "Hi"}
+        });
+        let lines = converter.convert_chunk(&format!("data: {}", serde_json::to_string(&chunk).unwrap()));
+        let text = lines.join("");
+        assert!(text.contains("\"delta\":{\"content\":\"Hi\"}"));
+    }
+
+    #[test]
+    fn test_stream_openai_to_openai_responses() {
+        let mut converter = StreamConverter::new(
+            crate::models::ApiType::OpenAI,
+            crate::models::ApiType::OpenAIResponses,
+        );
+        let chunk = serde_json::json!({
+            "choices": [{"index": 0, "delta": {"content": "Test"}, "finish_reason": null}]
+        });
+        let lines = converter.convert_chunk(&format!("data: {}", serde_json::to_string(&chunk).unwrap()));
+        let text = lines.join("");
+        assert!(text.contains("response.output_text.delta"));
+    }
+
+    #[test]
+    fn test_stream_openai_responses_to_openai() {
+        let mut converter = StreamConverter::new(
+            crate::models::ApiType::OpenAIResponses,
+            crate::models::ApiType::OpenAI,
+        );
+        let chunk = serde_json::json!({
+            "type": "response.output_text.delta",
+            "delta": "Output"
+        });
+        let lines = converter.convert_chunk(&format!("data: {}", serde_json::to_string(&chunk).unwrap()));
+        let text = lines.join("");
+        assert!(text.contains("\"delta\":{\"content\":\"Output\"}"));
+    }
+
+    #[test]
+    fn test_stream_anthropic_to_openai_responses() {
+        let mut converter = StreamConverter::new(
+            crate::models::ApiType::Anthropic,
+            crate::models::ApiType::OpenAIResponses,
+        );
+        let chunk = serde_json::json!({
+            "type": "content_block_delta",
+            "delta": {"type": "text_delta", "text": "Claude says hi"}
+        });
+        let lines = converter.convert_chunk(&format!("data: {}", serde_json::to_string(&chunk).unwrap()));
+        let text = lines.join("");
+        assert!(text.contains("response.output_text.delta"));
+        assert!(text.contains("Claude says hi"));
+    }
+
+    #[test]
+    fn test_stream_openai_responses_to_anthropic() {
+        let mut converter = StreamConverter::new(
+            crate::models::ApiType::OpenAIResponses,
+            crate::models::ApiType::Anthropic,
+        );
+        let chunk = serde_json::json!({
+            "type": "response.output_text.delta",
+            "delta": "From responses"
+        });
+        let lines = converter.convert_chunk(&format!("data: {}", serde_json::to_string(&chunk).unwrap()));
+        let text = lines.join("");
+        assert!(text.contains("content_block_delta"));
+        assert!(text.contains("From responses"));
     }
 }
