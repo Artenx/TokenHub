@@ -597,7 +597,7 @@ pub struct PoolTestSummary {
 }
 
 /// API 调用日志条目
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiCallLog {
     /// 请求时间
     pub timestamp: DateTime<Utc>,

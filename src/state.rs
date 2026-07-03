@@ -8,6 +8,11 @@ use std::time::Instant;
 
 use tracing::{debug, info, warn};
 
+/// state.json 中存储调用日志的特殊键（使用内部前缀，避免与端点 UUID 冲突）
+const CALL_LOGS_STATE_KEY: &str = "__internal:call_logs";
+/// state.json 中存储延迟采样的特殊键
+const LATENCIES_STATE_KEY: &str = "__internal:endpoint_latencies";
+
 /// IP 限流条目
 pub(crate) struct RateLimitEntry {
     window_start: Instant,
@@ -634,10 +639,35 @@ impl AppState {
                 return;
             }
         };
-        let count = data.len();
         let mut endpoints = self.endpoints.write();
+        let mut call_logs = self.call_logs.write();
+        let mut latencies = self.endpoint_latencies.write();
+        let mut restored_endpoints = 0usize;
         for (id, state_data) in &data {
+            // 内部状态键：调用日志
+            if id == CALL_LOGS_STATE_KEY {
+                if let Ok(logs) = serde_json::from_value::<VecDeque<ApiCallLog>>(state_data.clone()) {
+                    *call_logs = logs;
+                    while call_logs.len() > 50 {
+                        call_logs.pop_back();
+                    }
+                }
+                continue;
+            }
+            // 内部状态键：端点延迟采样
+            if id == LATENCIES_STATE_KEY {
+                if let Ok(samples) = serde_json::from_value::<HashMap<String, VecDeque<u64>>>(state_data.clone()) {
+                    *latencies = samples.into_iter().map(|(k, mut v)| {
+                        while v.len() > 100 {
+                            v.pop_front();
+                        }
+                        (k, v)
+                    }).collect();
+                }
+                continue;
+            }
             if let Some(ep) = endpoints.get_mut(id) {
+                restored_endpoints += 1;
                 if let Some(tokens) = state_data.get("tokens_used").and_then(|v| v.as_u64()) {
                     ep.tokens_used = tokens;
                 }
@@ -679,7 +709,8 @@ impl AppState {
                 }
             }
         }
-        info!("已从状态文件恢复 {} 个端点的运行时状态", count);
+        info!("已从状态文件恢复 {} 个端点的运行时状态、{} 条调用日志、{} 个端点的延迟采样",
+            restored_endpoints, call_logs.len(), latencies.len());
     }
 
     /// 异步保存运行时状态到 state.json
@@ -687,7 +718,7 @@ impl AppState {
         let _guard = self.save_state_mutex.lock().await;
         // 保存前记录版本；若保存期间版本变化，则不能清 dirty，避免丢失更新。
         let start_version = self.dirty_version.load(Ordering::SeqCst);
-        let data: HashMap<String, serde_json::Value> = {
+        let mut data: HashMap<String, serde_json::Value> = {
             let endpoints = self.endpoints.read();
             endpoints.iter().map(|(id, ep)| {
                 (id.clone(), serde_json::json!({
@@ -703,6 +734,18 @@ impl AppState {
                 }))
             }).collect()
         };
+        {
+            let call_logs = self.call_logs.read();
+            if !call_logs.is_empty() {
+                data.insert(CALL_LOGS_STATE_KEY.to_string(), serde_json::to_value(&*call_logs)?);
+            }
+        }
+        {
+            let latencies = self.endpoint_latencies.read();
+            if !latencies.is_empty() {
+                data.insert(LATENCIES_STATE_KEY.to_string(), serde_json::to_value(&*latencies)?);
+            }
+        }
         let json = serde_json::to_string_pretty(&data)
             .map_err(|e| anyhow::anyhow!("序列化运行时状态失败: {}", e))?;
         if let Some(parent) = self.state_path.parent() {
@@ -838,6 +881,7 @@ impl AppState {
         while logs.len() > 50 {
             logs.pop_back();
         }
+        self.mark_dirty();
     }
 
     /// 获取最近 50 条 API 调用日志
@@ -911,6 +955,7 @@ impl AppState {
         while samples.len() > 100 {
             samples.pop_front();
         }
+        self.mark_dirty();
     }
 
     /// 计算单个端点的延迟统计
