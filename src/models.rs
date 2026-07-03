@@ -277,9 +277,9 @@ impl EndpointState {
     }
 
     /// 预留失败或转发失败时回滚请求计数
+    /// 注意：total_requests 只增不减，用于统计实际尝试次数；仅回滚 requests_used。
     pub fn release_request(&mut self) {
         self.requests_used = self.requests_used.saturating_sub(1);
-        self.total_requests = self.total_requests.saturating_sub(1);
         // 同时从最近一条 history 记录中移除，保持滚动窗口一致性
         if self.config.request_reset_policy == ResetPolicy::Rolling5h {
             if let Some(last) = self.request_history.last().cloned() {
@@ -636,4 +636,10 @@ pub struct EndpointLatencyStats {
     pub p50_ms: u64,
     pub p90_ms: u64,
     pub p95_ms: u64,
+    /// 总请求次数（含失败尝试）
+    pub total_requests: u64,
+    /// 错误次数
+    pub error_count: u32,
+    /// 错误率（百分比，0-100）
+    pub error_rate: f64,
 }

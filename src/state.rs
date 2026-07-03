@@ -1009,6 +1009,9 @@ impl AppState {
                 all_samples.extend_from_slice(samples_b);
 
                 let stats = Self::compute_latency_stats(&all_samples);
+                let total_requests = ep.total_requests.max(1); // 避免除以 0
+                let error_count = ep.error_count;
+                let error_rate = (error_count as f64 / total_requests as f64) * 100.0;
                 crate::models::EndpointLatencyStats {
                     endpoint_id: ep.config.id.clone(),
                     endpoint_name: ep.config.name.clone(),
@@ -1020,6 +1023,9 @@ impl AppState {
                     p50_ms: stats.map(|(_, _, _, p50, _, _)| p50).unwrap_or(0),
                     p90_ms: stats.map(|(_, _, _, _, p90, _)| p90).unwrap_or(0),
                     p95_ms: stats.map(|(_, _, _, _, _, p95)| p95).unwrap_or(0),
+                    total_requests: ep.total_requests,
+                    error_count,
+                    error_rate,
                 }
             })
             .collect()

@@ -411,7 +411,6 @@ pub async fn forward_request(
         if !state.reserve_endpoint_request(&endpoint_id) {
             // 端点刚好被耗尽，当作可重试错误继续选择其他端点
             let e = AppError::Proxy(format!("端点 {} 额度已耗尽", endpoint.config.name));
-            state.increment_endpoint_errors(&endpoint_id);
             if !ctx.record_error(e) {
                 result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
                 break;
@@ -426,7 +425,6 @@ pub async fn forward_request(
             Ok(b) => b,
             Err(e) => {
                 warn!("端点 {} 模型名称处理失败: {}", endpoint.config.name, e);
-                state.increment_endpoint_errors(&endpoint_id);
                 state.release_endpoint_request(&endpoint_id);
                 if !ctx.record_error(e) {
                     result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
@@ -443,7 +441,6 @@ pub async fn forward_request(
             }
             Err(e) => {
                 warn!("端点 {} 请求失败: {}", endpoint.config.name, e);
-                state.increment_endpoint_errors(&endpoint_id);
                 state.release_endpoint_request(&endpoint_id);
                 if !ctx.record_error(e) {
                     result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
@@ -459,7 +456,13 @@ pub async fn forward_request(
     if api_prefix.is_some() {
         let (status_code, status, error_message) = match &result {
             Ok(resp) => (resp.status().as_u16(), "success".to_string(), None),
-            Err(e) => (e.status_code(), "error".to_string(), Some(e.to_string())),
+            Err(e) => {
+                // 请求最终失败时，只对最后尝试的端点计一次错误
+                if let Some(ref id) = last_endpoint_id {
+                    state.increment_endpoint_errors(id);
+                }
+                (e.status_code(), "error".to_string(), Some(e.to_string()))
+            }
         };
         state.add_call_log(ApiCallLog {
             timestamp: Utc::now(),
@@ -519,7 +522,7 @@ pub async fn forward_stream_request(
         // 原子预留请求额度，防止并发超支
         if !state.reserve_endpoint_request(&endpoint_id) {
             let e = AppError::Proxy(format!("端点 {} 额度已耗尽", endpoint.config.name));
-            state.increment_endpoint_errors(&endpoint_id);
+            
             if !ctx.record_error(e) {
                 result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
                 break;
@@ -535,7 +538,7 @@ pub async fn forward_stream_request(
             Ok(b) => b,
             Err(e) => {
                 warn!("端点 {} 模型名称处理失败: {}", endpoint.config.name, e);
-                state.increment_endpoint_errors(&endpoint_id);
+                
                 state.release_endpoint_request(&endpoint_id);
                 if !ctx.record_error(e) {
                     result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
@@ -565,7 +568,7 @@ pub async fn forward_stream_request(
         let response = match send_request(request_builder, &endpoint.config.name, endpoint.config.timeout).await {
             Ok(r) => r,
             Err(e) => {
-                state.increment_endpoint_errors(&endpoint_id);
+                
                 state.release_endpoint_request(&endpoint_id);
                 if !ctx.record_error(e) {
                     result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
@@ -581,7 +584,7 @@ pub async fn forward_stream_request(
             let duration_ms = req_start.elapsed().as_millis() as u64;
             state.record_latency(&endpoint_id, duration_ms);
             warn!("端点 {} 返回错误状态 {}: {}", endpoint.config.name, resp_status, error_body);
-            state.increment_endpoint_errors(&endpoint_id);
+            
             let sanitized = sanitize_error_body(&error_body);
             let e = if resp_status.is_client_error() && resp_status.as_u16() != 429 {
                 AppError::UpstreamError(format!("上游返回状态 {}: {}", resp_status, sanitized))
@@ -606,7 +609,7 @@ pub async fn forward_stream_request(
                 let duration_ms = req_start.elapsed().as_millis() as u64;
                 state.record_latency(&endpoint_id, duration_ms);
                 warn!("端点 {} 读取响应流失败: {}", endpoint.config.name, e);
-                state.increment_endpoint_errors(&endpoint_id);
+                
                 let e = AppError::Proxy(format!("读取响应流失败: {}", e));
                 state.release_endpoint_request(&endpoint_id);
                 if !ctx.record_error(e) {
@@ -619,7 +622,7 @@ pub async fn forward_stream_request(
                 let duration_ms = req_start.elapsed().as_millis() as u64;
                 state.record_latency(&endpoint_id, duration_ms);
                 warn!("端点 {} 返回空响应", endpoint.config.name);
-                state.increment_endpoint_errors(&endpoint_id);
+                
                 let e = AppError::Proxy("上游返回空响应".to_string());
                 state.release_endpoint_request(&endpoint_id);
                 if !ctx.record_error(e) {
@@ -634,7 +637,7 @@ pub async fn forward_stream_request(
             let duration_ms = req_start.elapsed().as_millis() as u64;
             state.record_latency(&endpoint_id, duration_ms);
             warn!("端点 {} 响应中包含错误 [{}]: {}", endpoint.config.name, error_code, error_msg);
-            state.increment_endpoint_errors(&endpoint_id);
+            
             let e = AppError::Proxy(format!("上游错误 [{}]: {}", error_code, error_msg));
             state.release_endpoint_request(&endpoint_id);
             if !ctx.record_error(e) {
@@ -760,7 +763,13 @@ pub async fn forward_stream_request(
     if api_prefix.is_some() {
         let (status_code, status, error_message) = match &result {
             Ok(resp) => (resp.status().as_u16(), "success".to_string(), None),
-            Err(e) => (e.status_code(), "error".to_string(), Some(e.to_string())),
+            Err(e) => {
+                // 请求最终失败时，只对最后尝试的端点计一次错误
+                if let Some(ref id) = last_endpoint_id {
+                    state.increment_endpoint_errors(id);
+                }
+                (e.status_code(), "error".to_string(), Some(e.to_string()))
+            }
         };
         state.add_call_log(ApiCallLog {
             timestamp: Utc::now(),

@@ -3301,7 +3301,7 @@ async function loadLatencyLeaderboard() {
     const tbody = document.getElementById('latency-leaderboard-body');
     if (!tbody) return;
 
-    tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: var(--text-secondary);">加载中...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" style="text-align: center; color: var(--text-secondary);">加载中...</td></tr>';
 
     try {
         const res = await fetch(`${API_BASE}/latency-leaderboard`);
@@ -3312,7 +3312,7 @@ async function loadLatencyLeaderboard() {
         renderLatencyLeaderboard(data.leaderboard || []);
     } catch (e) {
         console.error('加载延迟排行榜失败:', e);
-        tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; color: var(--danger);">加载失败: ${escapeHtml(e.message)}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="11" style="text-align: center; color: var(--danger);">加载失败: ${escapeHtml(e.message)}</td></tr>`;
     }
 }
 
@@ -3321,7 +3321,7 @@ function renderLatencyLeaderboard(stats) {
     if (!tbody) return;
 
     if (!stats || stats.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: var(--text-secondary);">暂无延迟数据</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" style="text-align: center; color: var(--text-secondary);">暂无延迟数据</td></tr>';
         return;
     }
 
@@ -3331,11 +3331,14 @@ function renderLatencyLeaderboard(stats) {
         const enabledText = item.enabled ? '启用' : '禁用';
         const enabledClass = item.enabled ? 'status-active' : 'status-disabled';
         const formatMs = (ms) => ms > 0 ? `${ms}ms` : '-';
+        const errorRate = item.error_rate !== undefined ? `${item.error_rate.toFixed(2)}%` : '-';
+        const errorClass = item.error_rate >= 50 ? 'status-error' : item.error_rate >= 20 ? 'status-warning' : 'status-success';
         return `
             <tr>
                 <td><span class="latency-rank ${rankClass}">${rank}</span></td>
                 <td>${escapeHtml(item.endpoint_name)}</td>
                 <td><span class="${enabledClass}">${enabledText}</span></td>
+                <td><span class="${errorClass}">${errorRate}</span></td>
                 <td>${item.samples || 0}</td>
                 <td><strong>${formatMs(item.avg_ms)}</strong></td>
                 <td>${formatMs(item.min_ms)}</td>
