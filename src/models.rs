@@ -248,11 +248,51 @@ impl EndpointState {
         }
     }
 
+    /// 原子地预留一次请求额度。选择端点后、实际转发前调用，
+    /// 防止并发请求同时通过 `is_available()` 导致限额超支。
+    pub fn try_reserve_request(&mut self) -> bool {
+        // 无限制时直接占用计数
+        if self.config.request_limit == 0 {
+            self.requests_used = self.requests_used.saturating_add(1);
+            self.total_requests = self.total_requests.saturating_add(1);
+            self.last_used = Some(Utc::now());
+            self.record_request_history();
+            return true;
+        }
+
+        let below_limit = match self.config.request_reset_policy {
+            ResetPolicy::Rolling5h => self.effective_requests() < self.config.request_limit,
+            _ => self.requests_used < self.config.request_limit,
+        };
+
+        if !below_limit {
+            return false;
+        }
+
+        self.requests_used = self.requests_used.saturating_add(1);
+        self.total_requests = self.total_requests.saturating_add(1);
+        self.last_used = Some(Utc::now());
+        self.record_request_history();
+        true
+    }
+
+    /// 预留失败或转发失败时回滚请求计数
+    pub fn release_request(&mut self) {
+        self.requests_used = self.requests_used.saturating_sub(1);
+        self.total_requests = self.total_requests.saturating_sub(1);
+        // 同时从最近一条 history 记录中移除，保持滚动窗口一致性
+        if self.config.request_reset_policy == ResetPolicy::Rolling5h {
+            if let Some(last) = self.request_history.last().cloned() {
+                if last.1 == self.requests_used.saturating_add(1) {
+                    self.request_history.pop();
+                }
+            }
+        }
+    }
+
     pub fn add_tokens(&mut self, amount: u64) {
         self.tokens_used = self.tokens_used.saturating_add(amount);
         self.last_used = Some(Utc::now());
-        self.total_requests = self.total_requests.saturating_add(1);
-        self.requests_used = self.requests_used.saturating_add(1);
 
         // Token 滑动窗口记录
         if self.config.reset_policy == ResetPolicy::Rolling5h {
@@ -264,8 +304,9 @@ impl EndpointState {
                 self.token_history.push((now, self.tokens_used));
             }
         }
+    }
 
-        // 请求次数滑动窗口记录
+    fn record_request_history(&mut self) {
         if self.config.request_reset_policy == ResetPolicy::Rolling5h {
             let now = Utc::now();
             let cutoff = now - Duration::hours(6);

@@ -150,7 +150,7 @@ async fn main() -> std::io::Result<()> {
                 if let Err(e) = save_state.save_runtime_state().await {
                     tracing::warn!("保存运行时状态失败: {}", e);
                 }
-                save_state.dirty.store(false, Ordering::Release);
+                // dirty 由 save_runtime_state 内部根据版本号决定是否清零
             }
         }
     });

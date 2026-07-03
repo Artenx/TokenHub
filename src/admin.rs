@@ -289,7 +289,7 @@ pub async fn list_models(
             } else {
                 Ok(HttpResponse::Ok().json(serde_json::json!({
                     "success": false,
-                    "message": format!("获取模型列表失败 (HTTP {}): {}", status, &response_text[..response_text.len().min(200)]),
+                    "message": format!("获取模型列表失败 (HTTP {}): {}", status, &response_text.chars().take(200).collect::<String>()),
                     "status": status.as_u16(),
                     "tested_url": models_url
                 })))
@@ -416,7 +416,7 @@ pub async fn check_endpoint(
             } else {
                 (sc, "error".to_string(), Some(format!("HTTP {}", status)), serde_json::json!({
                     "success": false,
-                    "message": format!("请求失败 (HTTP {}): {}", status, &response_text[..response_text.len().min(200)]),
+                    "message": format!("请求失败 (HTTP {}): {}", status, &response_text.chars().take(200).collect::<String>()),
                     "status": sc,
                     "tested_url": chat_url
                 }))
@@ -559,7 +559,7 @@ pub async fn test_endpoint_by_id(
             } else {
                 (sc, "error".to_string(), Some(format!("HTTP {}", status)), serde_json::json!({
                     "success": false,
-                    "message": format!("请求失败 (HTTP {}): {}", status, &response_text[..response_text.len().min(200)]),
+                    "message": format!("请求失败 (HTTP {}): {}", status, &response_text.chars().take(200).collect::<String>()),
                     "status": sc,
                     "tested_url": chat_url
                 }))
@@ -834,7 +834,7 @@ pub async fn test_pool_endpoints(
                         endpoint_id: ep_id.clone(),
                         endpoint_name: ep_cfg.name.clone(),
                         success: false,
-                        message: format!("请求失败 (HTTP {}): {}", status, &response_text[..response_text.len().min(200)]),
+                        message: format!("请求失败 (HTTP {}): {}", status, &response_text.chars().take(200).collect::<String>()),
                         model_used: model_name,
                         status: status.as_u16(),
                         tested_url: chat_url,

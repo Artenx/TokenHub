@@ -1273,10 +1273,20 @@ async function handleSaveEndpoint(e) {
     e.preventDefault();
     const id = document.getElementById('ep-id').value;
     const poolId = document.getElementById('ep-pool-id').value;
+
+    // 编辑时保留端点原有的全部池归属（端点支持多池），
+    // 避免表单只显示首个池导致保存后其它池里端点被静默移出。
+    const originalPoolIds = id
+        ? (currentEndpoints.find(e => e.id === id)?.pool_ids || [])
+        : [];
     
     // 处理 token_limit：为空时默认为 12 个 9
     const limitInput = document.getElementById('ep-limit').value;
     const tokenLimit = limitInput ? parseInt(limitInput) : 999999999999;
+    if (Number.isNaN(tokenLimit) || tokenLimit < 0) {
+        showToast('Token 限额必须是有效数字', 'error');
+        return;
+    }
     
     // 处理 reset_policy：默认为每日重置
     const resetPolicy = document.getElementById('ep-reset').value || 'daily';
@@ -1284,7 +1294,17 @@ async function handleSaveEndpoint(e) {
     // 处理请求次数限制
     const reqLimitInput = document.getElementById('ep-req-limit').value;
     const requestLimit = reqLimitInput ? parseInt(reqLimitInput) : 0;
+    if (Number.isNaN(requestLimit) || requestLimit < 0) {
+        showToast('请求次数限额必须是有效数字', 'error');
+        return;
+    }
     const reqResetPolicy = document.getElementById('ep-req-reset').value || 'manual';
+    
+    const timeout = parseInt(document.getElementById('ep-timeout').value) || 300;
+    if (Number.isNaN(timeout) || timeout <= 0) {
+        showToast('超时时间必须是有效正整数', 'error');
+        return;
+    }
     
     const data = {
         name: document.getElementById('ep-name').value,
@@ -1292,28 +1312,31 @@ async function handleSaveEndpoint(e) {
         api_type: document.getElementById('ep-type').value,
         api_key: document.getElementById('ep-apikey').value,
         token_limit: tokenLimit,
-        timeout: parseInt(document.getElementById('ep-timeout').value) || 300,
+        timeout: timeout,
         reset_policy: resetPolicy,
         request_limit: requestLimit,
         request_reset_policy: reqResetPolicy,
         enabled: document.getElementById('ep-enabled').checked,
-        pool_ids: poolId ? [poolId] : [],
+        pool_ids: id ? originalPoolIds : (poolId ? [poolId] : []),
         model_mappings: getModelMappings()
     };
 
-    // 编辑时如果api_key为空，使用原来的值
+    // 编辑时如果api_key为空，使用原来的值；回取失败则阻止保存，避免清空已有 key
     if (id && !data.api_key) {
         const ep = currentEndpoints.find(e => e.id === id);
         if (ep) {
-            // 需要从后端获取完整信息
             try {
                 const res = await fetch(`${API_BASE}/endpoints/${id}`);
                 if (res.ok) {
                     const fullEp = await res.json();
                     data.api_key = fullEp.config.api_key;
+                } else {
+                    showToast('无法获取原 API Key，请重新填写', 'error');
+                    return;
                 }
             } catch (e) {
-                // 忽略
+                showToast('无法获取原 API Key，请重新填写', 'error');
+                return;
             }
         }
     }
@@ -1511,8 +1534,11 @@ async function removeEndpointFromPool(endpointId, poolId) {
                 token_limit: fullEndpoint.config.token_limit,
                 timeout: fullEndpoint.config.timeout || 300,
                 reset_policy: fullEndpoint.config.reset_policy || 'manual',
+                request_limit: fullEndpoint.config.request_limit || 0,
+                request_reset_policy: fullEndpoint.config.request_reset_policy || 'manual',
                 enabled: fullEndpoint.config.enabled,
-                pool_ids: currentPoolIds
+                pool_ids: currentPoolIds,
+                model_mappings: fullEndpoint.config.model_mappings || []
             })
         });
         
@@ -1766,6 +1792,8 @@ async function confirmAddEndpointsToPool() {
                     token_limit: fullEndpoint.config.token_limit,
                     timeout: fullEndpoint.config.timeout || 300,
                     reset_policy: fullEndpoint.config.reset_policy || 'manual',
+                    request_limit: fullEndpoint.config.request_limit || 0,
+                    request_reset_policy: fullEndpoint.config.request_reset_policy || 'manual',
                     enabled: fullEndpoint.config.enabled,
                     pool_ids: newPoolIds,
                     model_mappings: modelMappings
@@ -2499,6 +2527,8 @@ async function saveEndpointMapping() {
                 token_limit: fullEp.config.token_limit,
                 timeout: fullEp.config.timeout || 300,
                 reset_policy: fullEp.config.reset_policy || 'manual',
+                request_limit: fullEp.config.request_limit || 0,
+                request_reset_policy: fullEp.config.request_reset_policy || 'manual',
                 enabled: fullEp.config.enabled,
                 pool_ids: fullEp.config.pool_ids || [],
                 model_mappings: mappings

@@ -2,12 +2,15 @@ use crate::models::AppConfig;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use tokio::fs;
+use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 const DEFAULT_CONFIG_FILE: &str = "config.toml";
 
 pub struct ConfigManager {
     config_path: PathBuf,
+    /// 防止并发写配置导致文件覆盖或损坏
+    write_lock: Mutex<()>,
 }
 
 impl ConfigManager {
@@ -15,7 +18,7 @@ impl ConfigManager {
         let path = config_path
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(DEFAULT_CONFIG_FILE));
-        Self { config_path: path }
+        Self { config_path: path, write_lock: Mutex::new(()) }
     }
 
     /// 加载配置文件，如果不存在则创建默认配置
@@ -43,8 +46,9 @@ impl ConfigManager {
             .unwrap_or_else(|| PathBuf::from("."))
     }
 
-    /// 保存配置到文件
+    /// 保存配置到文件（串行化写入，防止并发覆盖）
     pub async fn save(&self, config: &AppConfig) -> Result<()> {
+        let _guard = self.write_lock.lock().await;
         let content = toml::to_string_pretty(config)
             .context("序列化配置失败")?;
         // 确保父目录存在

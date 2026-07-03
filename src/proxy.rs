@@ -9,8 +9,8 @@ use tracing::{debug, error, warn};
 
 /// 截断上游错误响应体，防止敏感信息通过错误消息泄露给客户端
 fn sanitize_error_body(body: &str) -> String {
-    if body.len() > 200 {
-        format!("{}...(已截断)", &body[..200])
+    if body.chars().count() > 200 {
+        format!("{}...(已截断)", body.chars().take(200).collect::<String>())
     } else {
         body.to_string()
     }
@@ -385,6 +385,15 @@ pub async fn forward_request(
         let endpoint = state.get_endpoint(&endpoint_id)
             .ok_or_else(|| AppError::Proxy(format!("端点不存在: {}", endpoint_id)))?;
 
+        // 原子预留请求额度，防止并发超支
+        if !state.reserve_endpoint_request(&endpoint_id) {
+            // 端点刚好被耗尽，当作可重试错误继续选择其他端点
+            let e = AppError::Proxy(format!("端点 {} 额度已耗尽", endpoint.config.name));
+            state.increment_endpoint_errors(&endpoint_id);
+            if !ctx.record_error(e) { break; }
+            continue;
+        }
+
         debug!("尝试转发请求到端点 {} ({}) (尝试 {}/{})", endpoint.config.name, endpoint_id, attempt + 1, ctx.max_retries);
 
         let actual_path = path.strip_prefix(&ctx.exposed_api.prefix).unwrap_or(path);
@@ -393,6 +402,7 @@ pub async fn forward_request(
             Err(e) => {
                 warn!("端点 {} 模型名称处理失败: {}", endpoint.config.name, e);
                 state.increment_endpoint_errors(&endpoint_id);
+                state.release_endpoint_request(&endpoint_id);
                 if !ctx.record_error(e) { break; }
                 continue;
             }
@@ -403,6 +413,7 @@ pub async fn forward_request(
             Err(e) => {
                 warn!("端点 {} 请求失败: {}", endpoint.config.name, e);
                 state.increment_endpoint_errors(&endpoint_id);
+                state.release_endpoint_request(&endpoint_id);
                 if !ctx.record_error(e) { break; }
             }
         }
@@ -427,6 +438,14 @@ pub async fn forward_stream_request(
         let endpoint = state.get_endpoint(&endpoint_id)
             .ok_or_else(|| AppError::Proxy(format!("端点不存在: {}", endpoint_id)))?;
 
+        // 原子预留请求额度，防止并发超支
+        if !state.reserve_endpoint_request(&endpoint_id) {
+            let e = AppError::Proxy(format!("端点 {} 额度已耗尽", endpoint.config.name));
+            state.increment_endpoint_errors(&endpoint_id);
+            if !ctx.record_error(e) { break; }
+            continue;
+        }
+
         let actual_path = path.strip_prefix(&ctx.exposed_api.prefix).unwrap_or(path);
         let target_path = crate::converter::convert_path(actual_path, &ctx.exposed_api.api_type, &endpoint.config.api_type);
         let target_url = build_target_url(&endpoint.config.url, &target_path);
@@ -436,6 +455,7 @@ pub async fn forward_stream_request(
             Err(e) => {
                 warn!("端点 {} 模型名称处理失败: {}", endpoint.config.name, e);
                 state.increment_endpoint_errors(&endpoint_id);
+                state.release_endpoint_request(&endpoint_id);
                 if !ctx.record_error(e) { break; }
                 continue;
             }
@@ -462,6 +482,7 @@ pub async fn forward_stream_request(
             Ok(r) => r,
             Err(e) => {
                 state.increment_endpoint_errors(&endpoint_id);
+                state.release_endpoint_request(&endpoint_id);
                 if !ctx.record_error(e) { break; }
                 continue;
             }
@@ -480,6 +501,7 @@ pub async fn forward_stream_request(
             } else {
                 AppError::Proxy(format!("上游返回状态 {}: {}", resp_status, sanitized))
             };
+            state.release_endpoint_request(&endpoint_id);
             if !ctx.record_error(e) { break; }
             continue;
         }
@@ -496,6 +518,7 @@ pub async fn forward_stream_request(
                 warn!("端点 {} 读取响应流失败: {}", endpoint.config.name, e);
                 state.increment_endpoint_errors(&endpoint_id);
                 let e = AppError::Proxy(format!("读取响应流失败: {}", e));
+                state.release_endpoint_request(&endpoint_id);
                 if !ctx.record_error(e) { break; }
                 continue;
             }
@@ -505,6 +528,7 @@ pub async fn forward_stream_request(
                 warn!("端点 {} 返回空响应", endpoint.config.name);
                 state.increment_endpoint_errors(&endpoint_id);
                 let e = AppError::Proxy("上游返回空响应".to_string());
+                state.release_endpoint_request(&endpoint_id);
                 if !ctx.record_error(e) { break; }
                 continue;
             }
@@ -516,6 +540,7 @@ pub async fn forward_stream_request(
             warn!("端点 {} 响应中包含错误 [{}]: {}", endpoint.config.name, error_code, error_msg);
             state.increment_endpoint_errors(&endpoint_id);
             let e = AppError::Proxy(format!("上游错误 [{}]: {}", error_code, error_msg));
+            state.release_endpoint_request(&endpoint_id);
             if !ctx.record_error(e) { break; }
             continue;
         }

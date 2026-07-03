@@ -3,7 +3,7 @@ use chrono::Utc;
 use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 
 use tracing::{debug, info, warn};
@@ -35,6 +35,9 @@ pub struct AppState {
     pub state_path: PathBuf,
     /// 数据变更标记（用于后台持久化）
     pub dirty: AtomicBool,
+    /// 运行时状态版本号，保存前读取，保存后若版本未变才清零 dirty，
+    /// 防止保存期间新变更被丢失。
+    pub dirty_version: AtomicU64,
     /// 持久化写锁（防止并发写入导致数据覆盖）
     pub save_state_mutex: tokio::sync::Mutex<()>,
     /// 管理后台会话令牌集合
@@ -73,6 +76,7 @@ impl AppState {
             config_manager,
             state_path,
             dirty: AtomicBool::new(false),
+            dirty_version: AtomicU64::new(0),
             save_state_mutex: tokio::sync::Mutex::new(()),
             admin_sessions: RwLock::new(HashSet::new()),
             call_logs: RwLock::new(VecDeque::new()),
@@ -114,7 +118,7 @@ impl AppState {
         endpoints.get(id).cloned()
     }
 
-    /// 更新端点token使用量
+    /// 更新端点token使用量（请求计数已在选择端点时预留）
     pub fn update_endpoint_tokens(&self, id: &str, tokens: u64) {
         let mut endpoints = self.endpoints.write();
         if let Some(ep) = endpoints.get_mut(id) {
@@ -122,6 +126,28 @@ impl AppState {
             tracing::debug!("端点 {} 消耗 {} tokens, 总计: {}/{}", id, tokens, ep.tokens_used, ep.config.token_limit);
         }
         self.mark_dirty();
+    }
+
+    /// 为指定端点预留一次请求额度，返回是否预留成功
+    pub fn reserve_endpoint_request(&self, id: &str) -> bool {
+        let mut endpoints = self.endpoints.write();
+        if let Some(ep) = endpoints.get_mut(id) {
+            let ok = ep.try_reserve_request();
+            if ok {
+                self.mark_dirty();
+            }
+            return ok;
+        }
+        false
+    }
+
+    /// 释放指定端点已预留的请求额度（转发失败时回滚）
+    pub fn release_endpoint_request(&self, id: &str) {
+        let mut endpoints = self.endpoints.write();
+        if let Some(ep) = endpoints.get_mut(id) {
+            ep.release_request();
+            self.mark_dirty();
+        }
     }
 
     /// 增加端点错误计数
@@ -207,6 +233,12 @@ impl AppState {
         };
         self.config_manager.save(&config_to_save).await?;
 
+        // URL / API Key / 类型变更后模型缓存可能失效，清除以强制刷新
+        {
+            let mut cache = self.model_cache.write();
+            cache.remove(id);
+        }
+
         info!("已更新端点: {} ({})", state.config.name, id);
         Ok(state)
     }
@@ -216,6 +248,12 @@ impl AppState {
         {
             let mut endpoints = self.endpoints.write();
             endpoints.remove(id).ok_or_else(|| anyhow::anyhow!("端点不存在: {}", id))?;
+        }
+
+        // 同步清理模型缓存
+        {
+            let mut cache = self.model_cache.write();
+            cache.remove(id);
         }
 
         let config_to_save = {
@@ -573,6 +611,7 @@ impl AppState {
     /// 标记数据为脏（需要持久化）
     pub fn mark_dirty(&self) {
         self.dirty.store(true, Ordering::Release);
+        self.dirty_version.fetch_add(1, Ordering::SeqCst);
     }
 
     /// 从 state.json 加载端点的运行时状态
@@ -646,6 +685,8 @@ impl AppState {
     /// 异步保存运行时状态到 state.json
     pub async fn save_runtime_state(&self) -> anyhow::Result<()> {
         let _guard = self.save_state_mutex.lock().await;
+        // 保存前记录版本；若保存期间版本变化，则不能清 dirty，避免丢失更新。
+        let start_version = self.dirty_version.load(Ordering::SeqCst);
         let data: HashMap<String, serde_json::Value> = {
             let endpoints = self.endpoints.read();
             endpoints.iter().map(|(id, ep)| {
@@ -669,6 +710,10 @@ impl AppState {
         }
         tokio::fs::write(&self.state_path, json).await
             .map_err(|e| anyhow::anyhow!("写入状态文件失败: {}", e))?;
+        // 只有保存期间没有新变更时，才清 dirty；否则保留 dirty，等待下次保存。
+        if self.dirty_version.load(Ordering::SeqCst) == start_version {
+            self.dirty.store(false, Ordering::Release);
+        }
         debug!("已保存运行时状态 ({})", data.len());
         Ok(())
     }
