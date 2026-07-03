@@ -449,6 +449,149 @@ pub async fn check_endpoint(
     Ok(HttpResponse::Ok().json(response_json))
 }
 
+/// 端点卡片对话测试 - 根据端点ID测试
+pub async fn test_endpoint_by_id(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    path: web::Path<String>,
+    body: web::Json<serde_json::Value>,
+) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    let endpoint_id = path.into_inner();
+    let model = body.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+    let ep_state = state.get_endpoint(&endpoint_id)
+        .ok_or_else(|| AppError::NotFound("端点不存在".to_string()))?;
+    let ep_cfg = &ep_state.config;
+    let client = &state.http_client;
+
+    let base_url = ep_cfg.url.trim_end_matches('/');
+
+    let model_name = model.unwrap_or_else(|| {
+        match ep_cfg.api_type {
+            crate::models::ApiType::OpenAI | crate::models::ApiType::OpenAIResponses => "gpt-3.5-turbo".to_string(),
+            crate::models::ApiType::Anthropic => "claude-3-haiku-20240307".to_string(),
+        }
+    });
+
+    let (chat_url, chat_body, request_builder) = match ep_cfg.api_type {
+        crate::models::ApiType::OpenAI => {
+            let url = if base_url.ends_with("/v1") || base_url.ends_with("/v1/") {
+                format!("{}/chat/completions", base_url)
+            } else {
+                format!("{}/v1/chat/completions", base_url)
+            };
+            let body = serde_json::json!({
+                "model": model_name,
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 10
+            });
+            let builder = client.post(&url)
+                .header("Authorization", format!("Bearer {}", ep_cfg.api_key))
+                .header("Content-Type", "application/json");
+            (url, body, builder)
+        }
+        crate::models::ApiType::OpenAIResponses => {
+            let url = if base_url.ends_with("/v1") || base_url.ends_with("/v1/") {
+                format!("{}/responses", base_url)
+            } else {
+                format!("{}/v1/responses", base_url)
+            };
+            let body = serde_json::json!({
+                "model": model_name,
+                "input": "hi",
+                "max_output_tokens": 10
+            });
+            let builder = client.post(&url)
+                .header("Authorization", format!("Bearer {}", ep_cfg.api_key))
+                .header("Content-Type", "application/json");
+            (url, body, builder)
+        }
+        crate::models::ApiType::Anthropic => {
+            let url = if base_url.ends_with("/v1") || base_url.ends_with("/v1/") {
+                format!("{}/messages", base_url)
+            } else {
+                format!("{}/v1/messages", base_url)
+            };
+            let body = serde_json::json!({
+                "model": model_name,
+                "max_tokens": 10,
+                "messages": [{"role": "user", "content": "hi"}]
+            });
+            let builder = client.post(&url)
+                .header("x-api-key", &ep_cfg.api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("Content-Type", "application/json");
+            (url, body, builder)
+        }
+    };
+
+    let start = std::time::Instant::now();
+    let result = request_builder
+        .timeout(std::time::Duration::from_secs(10))
+        .body(chat_body.to_string())
+        .send()
+        .await;
+
+    let duration_ms = start.elapsed().as_millis() as u64;
+
+    let (status_code, status_str, error_msg, response_json) = match result {
+        Ok(response) => {
+            let status = response.status();
+            let response_text = response.text().await.unwrap_or_default();
+            let sc = status.as_u16();
+
+            if status.is_success() {
+                let reply = if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response_text) {
+                    json["choices"][0]["message"]["content"].as_str()
+                        .or_else(|| json["content"][0]["text"].as_str())
+                        .unwrap_or("无回复")
+                        .to_string()
+                } else {
+                    "响应解析失败".to_string()
+                };
+                (sc, "success".to_string(), None, serde_json::json!({
+                    "success": true,
+                    "message": reply,
+                    "status": sc,
+                    "tested_url": chat_url
+                }))
+            } else {
+                (sc, "error".to_string(), Some(format!("HTTP {}", status)), serde_json::json!({
+                    "success": false,
+                    "message": format!("请求失败 (HTTP {}): {}", status, &response_text[..response_text.len().min(200)]),
+                    "status": sc,
+                    "tested_url": chat_url
+                }))
+            }
+        }
+        Err(e) => {
+            (0, "error".to_string(), Some(e.to_string()), serde_json::json!({
+                "success": false,
+                "message": format!("连接失败: {}", e),
+                "status": 0,
+                "tested_url": chat_url
+            }))
+        }
+    };
+
+    state.add_call_log(crate::models::ApiCallLog {
+        timestamp: chrono::Utc::now(),
+        client_ip: "admin".to_string(),
+        method: "POST".to_string(),
+        path: chat_url.clone(),
+        api_prefix: Some(format!("[对话测试] {}", ep_cfg.name)),
+        endpoint_id: Some(endpoint_id),
+        endpoint_name: Some(ep_cfg.name.clone()),
+        status_code,
+        status: status_str,
+        error_message: error_msg,
+        duration_ms,
+    });
+
+    Ok(HttpResponse::Ok().json(response_json))
+}
+
 // ========== 池管理 ==========
 
 /// 获取单个对外API

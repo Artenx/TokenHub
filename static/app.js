@@ -831,11 +831,32 @@ function renderEndpointsList() {
                     <button class="btn btn-small btn-outline" onclick="resetEndpoint('${escapeAttr(ep.id)}')">重置Token</button>
                     <button class="btn btn-small btn-outline" onclick="resetEndpointRequests('${escapeAttr(ep.id)}')">重置请求</button>
                     <button class="btn btn-small" onclick="browseEndpointModels('${escapeAttr(ep.id)}', '${escapeAttr(ep.api_type)}')">浏览模型</button>
+                    <button class="btn btn-small btn-outline" onclick="quickTestEndpoint('${escapeAttr(ep.id)}', '${escapeAttr(ep.name)}')">对话测试</button>
                     <button class="btn btn-small btn-danger" onclick="deleteEndpoint('${escapeAttr(ep.id)}')">删除</button>
                 </div>
             </div>
         `;
     }).join('');
+}
+
+// 端点卡片快速对话测试
+async function quickTestEndpoint(id, name) {
+    showToast(`正在测试 ${escapeHtml(name)}...`, 'info');
+    try {
+        const res = await fetch(`${API_BASE}/endpoints/${encodeURIComponent(id)}/test`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        const result = await res.json();
+        if (result.success) {
+            showToast(`${escapeHtml(name)} 测试成功: ${escapeHtml(result.message)}`, 'success');
+        } else {
+            showToast(`${escapeHtml(name)} 测试失败: ${escapeHtml(result.message)}`, 'error');
+        }
+    } catch (e) {
+        showToast(`测试请求失败: ${e.message}`, 'error');
+    }
 }
 
 // 添加端点到指定池
