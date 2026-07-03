@@ -3250,7 +3250,7 @@ async function loadCallLogs() {
     const tbody = document.getElementById('call-logs-body');
     if (!tbody) return;
 
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--text-secondary);">加载中...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: var(--text-secondary);">加载中...</td></tr>';
 
     try {
         const res = await fetch(`${API_BASE}/logs`);
@@ -3261,7 +3261,7 @@ async function loadCallLogs() {
         renderCallLogs(data.logs || []);
     } catch (e) {
         console.error('加载调用日志失败:', e);
-        tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: var(--danger);">加载失败: ${escapeHtml(e.message)}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; color: var(--danger);">加载失败: ${escapeHtml(e.message)}</td></tr>`;
     }
 }
 
@@ -3270,7 +3270,7 @@ function renderCallLogs(logs) {
     if (!tbody) return;
 
     if (!logs || logs.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--text-secondary);">暂无调用日志</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: var(--text-secondary);">暂无调用日志</td></tr>';
         return;
     }
 
@@ -3285,6 +3285,7 @@ function renderCallLogs(logs) {
                 <td>${escapeHtml(log.method || '-')}</td>
                 <td>${escapeHtml(log.path || '-')}</td>
                 <td>${escapeHtml(log.api_prefix || '-')}</td>
+                <td>${escapeHtml(log.endpoint_name || log.endpoint_id || '-')}</td>
                 <td>${log.status_code || '-'}</td>
                 <td><span class="${statusClass}">${statusText}</span></td>
                 <td>${log.duration_ms !== undefined ? log.duration_ms : '-'}</td>

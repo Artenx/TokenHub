@@ -3,6 +3,7 @@ use crate::models::*;
 use crate::scheduler::Scheduler;
 use crate::state::AppState;
 use actix_web::{web, HttpRequest, HttpResponse};
+use chrono::Utc;
 use futures_util::StreamExt;
 use serde_json::Value;
 use tracing::{debug, error, warn};
@@ -375,22 +376,46 @@ pub async fn forward_request(
     req: &HttpRequest,
     body: bytes::Bytes,
     path: &str,
+    api_prefix: Option<String>,
 ) -> Result<HttpResponse, AppError> {
+    let start = std::time::Instant::now();
+    let client_ip = req.connection_info().peer_addr().unwrap_or("unknown").to_string();
+    let method = req.method().to_string();
+    let mut last_endpoint_id: Option<String> = None;
+    let mut last_endpoint_name: Option<String> = None;
+
     let mut ctx = RetryContext::new(state, path)?;
+    let mut result: Option<Result<HttpResponse, AppError>> = None;
 
     for attempt in 0..ctx.max_retries {
-        let endpoint_id = ctx.select_endpoint(state, attempt)
-            .ok_or_else(|| AppError::Proxy("池中没有可用的代理端点".to_string()))?;
+        let endpoint_id = match ctx.select_endpoint(state, attempt) {
+            Some(id) => id,
+            None => {
+                result = Some(Err(AppError::Proxy("池中没有可用的代理端点".to_string())));
+                break;
+            }
+        };
 
-        let endpoint = state.get_endpoint(&endpoint_id)
-            .ok_or_else(|| AppError::Proxy(format!("端点不存在: {}", endpoint_id)))?;
+        let endpoint = match state.get_endpoint(&endpoint_id) {
+            Some(ep) => ep,
+            None => {
+                result = Some(Err(AppError::Proxy(format!("端点不存在: {}", endpoint_id))));
+                break;
+            }
+        };
+
+        last_endpoint_id = Some(endpoint_id.clone());
+        last_endpoint_name = Some(endpoint.config.name.clone());
 
         // 原子预留请求额度，防止并发超支
         if !state.reserve_endpoint_request(&endpoint_id) {
             // 端点刚好被耗尽，当作可重试错误继续选择其他端点
             let e = AppError::Proxy(format!("端点 {} 额度已耗尽", endpoint.config.name));
             state.increment_endpoint_errors(&endpoint_id);
-            if !ctx.record_error(e) { break; }
+            if !ctx.record_error(e) {
+                result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
+                break;
+            }
             continue;
         }
 
@@ -403,23 +428,55 @@ pub async fn forward_request(
                 warn!("端点 {} 模型名称处理失败: {}", endpoint.config.name, e);
                 state.increment_endpoint_errors(&endpoint_id);
                 state.release_endpoint_request(&endpoint_id);
-                if !ctx.record_error(e) { break; }
+                if !ctx.record_error(e) {
+                    result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
+                    break;
+                }
                 continue;
             }
         };
 
         match forward_to_endpoint(state, req, &mapped_body, &endpoint, actual_path, &ctx.exposed_api.api_type).await {
-            Ok(response) => return Ok(response),
+            Ok(response) => {
+                result = Some(Ok(response));
+                break;
+            }
             Err(e) => {
                 warn!("端点 {} 请求失败: {}", endpoint.config.name, e);
                 state.increment_endpoint_errors(&endpoint_id);
                 state.release_endpoint_request(&endpoint_id);
-                if !ctx.record_error(e) { break; }
+                if !ctx.record_error(e) {
+                    result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
+                    break;
+                }
             }
         }
     }
 
-    Err(ctx.into_final_error())
+    let result = result.unwrap_or_else(|| Err(ctx.into_final_error()));
+
+    // 只记录命中对外 API 前缀的请求，过滤扫描器流量
+    if api_prefix.is_some() {
+        let (status_code, status, error_message) = match &result {
+            Ok(resp) => (resp.status().as_u16(), "success".to_string(), None),
+            Err(e) => (e.status_code(), "error".to_string(), Some(e.to_string())),
+        };
+        state.add_call_log(ApiCallLog {
+            timestamp: Utc::now(),
+            client_ip,
+            method,
+            path: path.to_string(),
+            api_prefix,
+            endpoint_id: last_endpoint_id,
+            endpoint_name: last_endpoint_name,
+            status_code,
+            status,
+            error_message,
+            duration_ms: start.elapsed().as_millis() as u64,
+        });
+    }
+
+    result
 }
 
 /// 处理流式响应转发
@@ -428,21 +485,45 @@ pub async fn forward_stream_request(
     req: &HttpRequest,
     body: bytes::Bytes,
     path: &str,
+    api_prefix: Option<String>,
 ) -> Result<HttpResponse, AppError> {
+    let start = std::time::Instant::now();
+    let client_ip = req.connection_info().peer_addr().unwrap_or("unknown").to_string();
+    let method = req.method().to_string();
+    let mut last_endpoint_id: Option<String> = None;
+    let mut last_endpoint_name: Option<String> = None;
+
     let mut ctx = RetryContext::new(state.get_ref(), path)?;
+    let mut result: Option<Result<HttpResponse, AppError>> = None;
 
     for attempt in 0..ctx.max_retries {
-        let endpoint_id = ctx.select_endpoint(state.get_ref(), attempt)
-            .ok_or_else(|| AppError::Proxy("池中没有可用的代理端点".to_string()))?;
+        let endpoint_id = match ctx.select_endpoint(state.get_ref(), attempt) {
+            Some(id) => id,
+            None => {
+                result = Some(Err(AppError::Proxy("池中没有可用的代理端点".to_string())));
+                break;
+            }
+        };
 
-        let endpoint = state.get_endpoint(&endpoint_id)
-            .ok_or_else(|| AppError::Proxy(format!("端点不存在: {}", endpoint_id)))?;
+        let endpoint = match state.get_endpoint(&endpoint_id) {
+            Some(ep) => ep,
+            None => {
+                result = Some(Err(AppError::Proxy(format!("端点不存在: {}", endpoint_id))));
+                break;
+            }
+        };
+
+        last_endpoint_id = Some(endpoint_id.clone());
+        last_endpoint_name = Some(endpoint.config.name.clone());
 
         // 原子预留请求额度，防止并发超支
         if !state.reserve_endpoint_request(&endpoint_id) {
             let e = AppError::Proxy(format!("端点 {} 额度已耗尽", endpoint.config.name));
             state.increment_endpoint_errors(&endpoint_id);
-            if !ctx.record_error(e) { break; }
+            if !ctx.record_error(e) {
+                result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
+                break;
+            }
             continue;
         }
 
@@ -456,7 +537,10 @@ pub async fn forward_stream_request(
                 warn!("端点 {} 模型名称处理失败: {}", endpoint.config.name, e);
                 state.increment_endpoint_errors(&endpoint_id);
                 state.release_endpoint_request(&endpoint_id);
-                if !ctx.record_error(e) { break; }
+                if !ctx.record_error(e) {
+                    result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
+                    break;
+                }
                 continue;
             }
         };
@@ -477,13 +561,16 @@ pub async fn forward_stream_request(
         debug!("流式转发到: {} (尝试 {}/{})", target_url, attempt + 1, ctx.max_retries);
 
         let request_builder = build_upstream_request(state.get_ref(), req, &endpoint, &target_url, &converted_body)?;
-        let start = std::time::Instant::now();
+        let req_start = std::time::Instant::now();
         let response = match send_request(request_builder, &endpoint.config.name, endpoint.config.timeout).await {
             Ok(r) => r,
             Err(e) => {
                 state.increment_endpoint_errors(&endpoint_id);
                 state.release_endpoint_request(&endpoint_id);
-                if !ctx.record_error(e) { break; }
+                if !ctx.record_error(e) {
+                    result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
+                    break;
+                }
                 continue;
             }
         };
@@ -491,7 +578,7 @@ pub async fn forward_stream_request(
         let resp_status = response.status();
         if resp_status != 200 {
             let error_body = response.text().await.unwrap_or_default();
-            let duration_ms = start.elapsed().as_millis() as u64;
+            let duration_ms = req_start.elapsed().as_millis() as u64;
             state.record_latency(&endpoint_id, duration_ms);
             warn!("端点 {} 返回错误状态 {}: {}", endpoint.config.name, resp_status, error_body);
             state.increment_endpoint_errors(&endpoint_id);
@@ -502,7 +589,10 @@ pub async fn forward_stream_request(
                 AppError::Proxy(format!("上游返回状态 {}: {}", resp_status, sanitized))
             };
             state.release_endpoint_request(&endpoint_id);
-            if !ctx.record_error(e) { break; }
+            if !ctx.record_error(e) {
+                result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
+                break;
+            }
             continue;
         }
 
@@ -513,40 +603,49 @@ pub async fn forward_stream_request(
         let first_chunk = match stream.next().await {
             Some(Ok(chunk)) => chunk,
             Some(Err(e)) => {
-                let duration_ms = start.elapsed().as_millis() as u64;
+                let duration_ms = req_start.elapsed().as_millis() as u64;
                 state.record_latency(&endpoint_id, duration_ms);
                 warn!("端点 {} 读取响应流失败: {}", endpoint.config.name, e);
                 state.increment_endpoint_errors(&endpoint_id);
                 let e = AppError::Proxy(format!("读取响应流失败: {}", e));
                 state.release_endpoint_request(&endpoint_id);
-                if !ctx.record_error(e) { break; }
+                if !ctx.record_error(e) {
+                    result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
+                    break;
+                }
                 continue;
             }
             None => {
-                let duration_ms = start.elapsed().as_millis() as u64;
+                let duration_ms = req_start.elapsed().as_millis() as u64;
                 state.record_latency(&endpoint_id, duration_ms);
                 warn!("端点 {} 返回空响应", endpoint.config.name);
                 state.increment_endpoint_errors(&endpoint_id);
                 let e = AppError::Proxy("上游返回空响应".to_string());
                 state.release_endpoint_request(&endpoint_id);
-                if !ctx.record_error(e) { break; }
+                if !ctx.record_error(e) {
+                    result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
+                    break;
+                }
                 continue;
             }
         };
 
         if let Some((error_code, error_msg)) = detect_response_error(&first_chunk) {
-            let duration_ms = start.elapsed().as_millis() as u64;
+            let duration_ms = req_start.elapsed().as_millis() as u64;
             state.record_latency(&endpoint_id, duration_ms);
             warn!("端点 {} 响应中包含错误 [{}]: {}", endpoint.config.name, error_code, error_msg);
             state.increment_endpoint_errors(&endpoint_id);
             let e = AppError::Proxy(format!("上游错误 [{}]: {}", error_code, error_msg));
             state.release_endpoint_request(&endpoint_id);
-            if !ctx.record_error(e) { break; }
+            if !ctx.record_error(e) {
+                result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
+                break;
+            }
             continue;
         }
 
         // 无错误，记录首字节延迟，将第一个 chunk 和剩余 stream 合并后转发给客户端
-        let duration_ms = start.elapsed().as_millis() as u64;
+        let duration_ms = req_start.elapsed().as_millis() as u64;
         state.record_latency(&endpoint_id, duration_ms);
         let ep_id = endpoint.config.id.clone();
         let ep_api_type = endpoint.config.api_type.clone();
@@ -568,10 +667,10 @@ pub async fn forward_stream_request(
             }
         }
 
-        if need_convert {
+        let body_stream = if need_convert {
             // 需要格式转换
             let mut converter = crate::converter::StreamConverter::new(ep_api_type.clone(), client_api_type);
-            let body_stream = response_builder
+            response_builder
                 .content_type("text/event-stream")
                 .insert_header(("Cache-Control", "no-cache"))
                 .insert_header(("Connection", "keep-alive"))
@@ -615,11 +714,10 @@ pub async fn forward_stream_request(
                             Ok(bytes::Bytes::from(output))
                         }
                     })
-                });
-            return Ok(body_stream);
+                })
         } else {
             // 同格式，直接转发
-            let body_stream = response_builder
+            response_builder
                 .content_type("text/event-stream")
                 .insert_header(("Cache-Control", "no-cache"))
                 .insert_header(("Connection", "keep-alive"))
@@ -649,12 +747,37 @@ pub async fn forward_stream_request(
                         }
                         chunk
                     })
-                });
-            return Ok(body_stream);
-        }
+                })
+        };
+
+        result = Some(Ok(body_stream));
+        break;
     }
 
-    Err(ctx.into_final_error())
+    let result = result.unwrap_or_else(|| Err(ctx.into_final_error()));
+
+    // 只记录命中对外 API 前缀的请求，过滤扫描器流量
+    if api_prefix.is_some() {
+        let (status_code, status, error_message) = match &result {
+            Ok(resp) => (resp.status().as_u16(), "success".to_string(), None),
+            Err(e) => (e.status_code(), "error".to_string(), Some(e.to_string())),
+        };
+        state.add_call_log(ApiCallLog {
+            timestamp: Utc::now(),
+            client_ip,
+            method,
+            path: path.to_string(),
+            api_prefix,
+            endpoint_id: last_endpoint_id,
+            endpoint_name: last_endpoint_name,
+            status_code,
+            status,
+            error_message,
+            duration_ms: start.elapsed().as_millis() as u64,
+        });
+    }
+
+    result
 }
 
 /// 转发请求到指定端点（非流式）

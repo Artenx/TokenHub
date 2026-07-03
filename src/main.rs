@@ -23,18 +23,11 @@ async fn api_proxy(
     req: HttpRequest,
     body: web::Bytes,
 ) -> Result<HttpResponse, error::AppError> {
-    use crate::models::ApiCallLog;
-    use chrono::Utc;
-
-    let start = std::time::Instant::now();
     let conn_info = req.connection_info();
     let client_ip = conn_info.peer_addr().unwrap_or("unknown").to_string();
-    let method = req.method().to_string();
     let path = req.uri().path().to_string();
-    let query = req.uri().query().map(|q| format!("?{}", q)).unwrap_or_default();
-    let full_path = format!("{}{}", path, query);
 
-    // 提前获取命中的 API 前缀，用于日志记录
+    // 提前获取命中的 API 前缀，用于 IP 限流判断
     let api_prefix = state.match_exposed_api(&path).map(|a| a.prefix);
 
     // 对未命中对外 API 的请求进行 IP 限流，防御扫描器
@@ -45,48 +38,24 @@ async fn api_proxy(
     }
 
     // API密钥认证
-    let auth_result = auth::check_api_auth(&state, &req);
-
-    let result = if let Err(e) = auth_result {
-        Err(e)
-    } else {
-        // 检查是否是流式请求（通过解析 JSON 的 stream 字段，避免子串误判）
-        let is_stream = serde_json::from_slice::<serde_json::Value>(&body)
-            .ok()
-            .and_then(|v| v.get("stream").and_then(|s| s.as_bool()))
-            .unwrap_or(false);
-
-        if is_stream {
-            proxy::forward_stream_request(state.clone(), &req, body, &full_path).await
-        } else {
-            proxy::forward_request(state.get_ref(), &req, body, &full_path).await
-        }
-    };
-
-    let duration_ms = start.elapsed().as_millis() as u64;
-    let (status_code, status, error_message) = match &result {
-        Ok(resp) => (resp.status().as_u16(), "success".to_string(), None),
-        Err(e) => (e.status_code(), "error".to_string(), Some(e.to_string())),
-    };
-
-    // 只记录命中对外 API 前缀的请求，过滤扫描器流量
-    if api_prefix.is_some() {
-        state.add_call_log(ApiCallLog {
-            timestamp: Utc::now(),
-            client_ip,
-            method,
-            path: full_path,
-            api_prefix,
-            endpoint_id: None,
-            endpoint_name: None,
-            status_code,
-            status,
-            error_message,
-            duration_ms,
-        });
+    if let Err(e) = auth::check_api_auth(&state, &req) {
+        return Err(e);
     }
 
-    result
+    let query = req.uri().query().map(|q| format!("?{}", q)).unwrap_or_default();
+    let full_path = format!("{}{}", path, query);
+
+    // 检查是否是流式请求（通过解析 JSON 的 stream 字段，避免子串误判）
+    let is_stream = serde_json::from_slice::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|v| v.get("stream").and_then(|s| s.as_bool()))
+        .unwrap_or(false);
+
+    if is_stream {
+        proxy::forward_stream_request(state.clone(), &req, body, &full_path, api_prefix).await
+    } else {
+        proxy::forward_request(state.get_ref(), &req, body, &full_path, api_prefix).await
+    }
 }
 
 /// 健康检查
