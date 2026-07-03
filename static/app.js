@@ -920,12 +920,12 @@ async function editEndpoint(id, fromPool = false) {
     document.getElementById('ep-name').value = ep.name;
     document.getElementById('ep-url').value = ep.url;
     document.getElementById('ep-type').value = ep.api_type;
-    document.getElementById('ep-limit').value = ep.token_limit === 999999999999 ? '' : (ep.token_limit || '');
+    document.getElementById('ep-limit').value = ep.token_limit >= 999999999000 ? '' : (ep.token_limit > 0 ? ep.token_limit : '');
     document.getElementById('ep-timeout').value = ep.timeout || 300;
     document.getElementById('ep-enabled').checked = ep.enabled;
 
-    // 请求次数限制
-    document.getElementById('ep-req-limit').value = ep.request_limit || '';
+    // 请求次数限制（0 表示无上限，显示为空）
+    document.getElementById('ep-req-limit').value = ep.request_limit > 0 ? ep.request_limit : '';
     document.getElementById('ep-req-reset').value = ep.request_reset_policy || 'manual';
 
     // 触发请求限制变化事件，控制重置方式的禁用状态
