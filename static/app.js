@@ -777,7 +777,9 @@ function renderEndpointsList() {
         return;
     }
 
-    container.innerHTML = currentEndpoints.map(ep => {
+    container.innerHTML = [...currentEndpoints]
+        .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
+        .map(ep => {
         const isUnlimited = ep.token_limit >= 999999999000;
         const percentage = (!isUnlimited && ep.token_limit > 0) ? (ep.tokens_used / ep.token_limit * 100) : 0;
         const progressClass = percentage >= 100 ? 'full' : percentage >= 80 ? 'high' : '';
