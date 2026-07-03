@@ -43,6 +43,8 @@ pub struct AppState {
     pub call_logs: RwLock<VecDeque<ApiCallLog>>,
     /// IP 请求频率限制
     pub rate_limits: RwLock<HashMap<String, RateLimitEntry>>,
+    /// 端点延迟采样（每个端点最多保留 100 条，毫秒）
+    pub endpoint_latencies: RwLock<HashMap<String, VecDeque<u64>>>,
 }
 
 impl AppState {
@@ -75,6 +77,7 @@ impl AppState {
             admin_sessions: RwLock::new(HashSet::new()),
             call_logs: RwLock::new(VecDeque::new()),
             rate_limits: RwLock::new(HashMap::new()),
+            endpoint_latencies: RwLock::new(HashMap::new()),
         };
 
         // 从 state.json 恢复运行时状态
@@ -851,6 +854,77 @@ impl AppState {
                 now.duration_since(entry.window_start) < std::time::Duration::from_secs(300)
             }
         });
+    }
+
+    // ========== 端点延迟统计 ==========
+
+    /// 记录一次端点请求延迟（毫秒）
+    pub fn record_latency(&self, endpoint_id: &str, duration_ms: u64) {
+        let mut latencies = self.endpoint_latencies.write();
+        let samples = latencies.entry(endpoint_id.to_string()).or_insert_with(VecDeque::new);
+        samples.push_back(duration_ms);
+        while samples.len() > 100 {
+            samples.pop_front();
+        }
+    }
+
+    /// 计算单个端点的延迟统计
+    fn compute_latency_stats(samples: &[u64]) -> Option<(u64, u64, u64, u64, u64, u64)> {
+        if samples.is_empty() {
+            return None;
+        }
+        let min = *samples.iter().min()?;
+        let max = *samples.iter().max()?;
+        let sum: u64 = samples.iter().sum();
+        let avg = sum / samples.len() as u64;
+
+        let mut sorted = samples.to_vec();
+        sorted.sort_unstable();
+
+        fn percentile(sorted: &[u64], p: f64) -> u64 {
+            if sorted.len() == 1 {
+                return sorted[0];
+            }
+            let idx = (p / 100.0 * (sorted.len() - 1) as f64).ceil() as usize;
+            sorted[idx.min(sorted.len() - 1)]
+        }
+
+        let p50 = percentile(&sorted, 50.0);
+        let p90 = percentile(&sorted, 90.0);
+        let p95 = percentile(&sorted, 95.0);
+
+        Some((avg, min, max, p50, p90, p95))
+    }
+
+    /// 获取所有端点的延迟统计
+    pub fn get_latency_stats(&self) -> Vec<crate::models::EndpointLatencyStats> {
+        let latencies = self.endpoint_latencies.read();
+        let endpoints = self.endpoints.read();
+
+        endpoints
+            .values()
+            .map(|ep| {
+                let samples = latencies.get(&ep.config.id).map(|v| v.as_slices()).unwrap_or_default();
+                let (samples_a, samples_b) = samples;
+                let mut all_samples = Vec::with_capacity(samples_a.len() + samples_b.len());
+                all_samples.extend_from_slice(samples_a);
+                all_samples.extend_from_slice(samples_b);
+
+                let stats = Self::compute_latency_stats(&all_samples);
+                crate::models::EndpointLatencyStats {
+                    endpoint_id: ep.config.id.clone(),
+                    endpoint_name: ep.config.name.clone(),
+                    enabled: ep.config.enabled,
+                    samples: all_samples.len(),
+                    avg_ms: stats.map(|(avg, _, _, _, _, _)| avg).unwrap_or(0),
+                    min_ms: stats.map(|(_, min, _, _, _, _)| min).unwrap_or(0),
+                    max_ms: stats.map(|(_, _, max, _, _, _)| max).unwrap_or(0),
+                    p50_ms: stats.map(|(_, _, _, p50, _, _)| p50).unwrap_or(0),
+                    p90_ms: stats.map(|(_, _, _, _, p90, _)| p90).unwrap_or(0),
+                    p95_ms: stats.map(|(_, _, _, _, _, p95)| p95).unwrap_or(0),
+                }
+            })
+            .collect()
     }
 
     // ========== 模型缓存管理 ==========

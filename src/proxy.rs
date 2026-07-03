@@ -457,6 +457,7 @@ pub async fn forward_stream_request(
         debug!("流式转发到: {} (尝试 {}/{})", target_url, attempt + 1, ctx.max_retries);
 
         let request_builder = build_upstream_request(state.get_ref(), req, &endpoint, &target_url, &converted_body)?;
+        let start = std::time::Instant::now();
         let response = match send_request(request_builder, &endpoint.config.name, endpoint.config.timeout).await {
             Ok(r) => r,
             Err(e) => {
@@ -469,6 +470,8 @@ pub async fn forward_stream_request(
         let resp_status = response.status();
         if resp_status != 200 {
             let error_body = response.text().await.unwrap_or_default();
+            let duration_ms = start.elapsed().as_millis() as u64;
+            state.record_latency(&endpoint_id, duration_ms);
             warn!("端点 {} 返回错误状态 {}: {}", endpoint.config.name, resp_status, error_body);
             state.increment_endpoint_errors(&endpoint_id);
             let sanitized = sanitize_error_body(&error_body);
@@ -488,6 +491,8 @@ pub async fn forward_stream_request(
         let first_chunk = match stream.next().await {
             Some(Ok(chunk)) => chunk,
             Some(Err(e)) => {
+                let duration_ms = start.elapsed().as_millis() as u64;
+                state.record_latency(&endpoint_id, duration_ms);
                 warn!("端点 {} 读取响应流失败: {}", endpoint.config.name, e);
                 state.increment_endpoint_errors(&endpoint_id);
                 let e = AppError::Proxy(format!("读取响应流失败: {}", e));
@@ -495,6 +500,8 @@ pub async fn forward_stream_request(
                 continue;
             }
             None => {
+                let duration_ms = start.elapsed().as_millis() as u64;
+                state.record_latency(&endpoint_id, duration_ms);
                 warn!("端点 {} 返回空响应", endpoint.config.name);
                 state.increment_endpoint_errors(&endpoint_id);
                 let e = AppError::Proxy("上游返回空响应".to_string());
@@ -504,6 +511,8 @@ pub async fn forward_stream_request(
         };
 
         if let Some((error_code, error_msg)) = detect_response_error(&first_chunk) {
+            let duration_ms = start.elapsed().as_millis() as u64;
+            state.record_latency(&endpoint_id, duration_ms);
             warn!("端点 {} 响应中包含错误 [{}]: {}", endpoint.config.name, error_code, error_msg);
             state.increment_endpoint_errors(&endpoint_id);
             let e = AppError::Proxy(format!("上游错误 [{}]: {}", error_code, error_msg));
@@ -511,7 +520,9 @@ pub async fn forward_stream_request(
             continue;
         }
 
-        // 无错误，将第一个 chunk 和剩余 stream 合并后转发给客户端
+        // 无错误，记录首字节延迟，将第一个 chunk 和剩余 stream 合并后转发给客户端
+        let duration_ms = start.elapsed().as_millis() as u64;
+        state.record_latency(&endpoint_id, duration_ms);
         let ep_id = endpoint.config.id.clone();
         let ep_api_type = endpoint.config.api_type.clone();
         let client_api_type = ctx.exposed_api.api_type.clone();
@@ -648,13 +659,15 @@ async fn forward_to_endpoint(
     };
 
     let request_builder = build_upstream_request(state, req, endpoint, &target_url, &converted_body)?;
+    let start = std::time::Instant::now();
     let response = send_request(request_builder, &endpoint.config.name, endpoint.config.timeout).await?;
-
     let status = response.status();
     let headers = response.headers().clone();
 
     if status != 200 {
         let error_body = response.text().await.unwrap_or_default();
+        let duration_ms = start.elapsed().as_millis() as u64;
+        state.record_latency(&endpoint.config.id, duration_ms);
         error!("端点 {} 返回错误状态 {}: {}", endpoint.config.name, status, error_body);
         let sanitized = sanitize_error_body(&error_body);
         if status.is_client_error() && status.as_u16() != 429 {
@@ -664,6 +677,8 @@ async fn forward_to_endpoint(
     }
 
     let response_body = response.bytes().await.map_err(|e| AppError::Proxy(format!("读取响应失败: {}", e)))?;
+    let duration_ms = start.elapsed().as_millis() as u64;
+    state.record_latency(&endpoint.config.id, duration_ms);
 
     if let Some((error_code, error_msg)) = detect_response_error(&response_body) {
         error!("端点 {} 响应中包含错误 [{}]: {}", endpoint.config.name, error_code, error_msg);

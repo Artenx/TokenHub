@@ -485,6 +485,45 @@ nav {
     border-color: rgba(245, 158, 11, 0.2);
 }
 
+/* === LATENCY LEADERBOARD === */
+.latency-rank {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    background: var(--secondary);
+    color: var(--secondary-foreground);
+}
+
+.latency-rank.rank-1 {
+    background: #fbbf24;
+    color: #92400e;
+}
+
+.latency-rank.rank-2 {
+    background: #e5e7eb;
+    color: #374151;
+}
+
+.latency-rank.rank-3 {
+    background: #fdba74;
+    color: #7c2d12;
+}
+
+.status-active {
+    color: var(--success);
+    font-weight: 500;
+}
+
+.status-disabled {
+    color: var(--danger);
+    font-weight: 500;
+}
+
 .badge-retry {
     background: rgba(245, 158, 11, 0.1);
     color: #b45309;

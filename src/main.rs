@@ -239,6 +239,7 @@ async fn main() -> std::io::Result<()> {
             .route("/admin/api/config", web::put().to(admin::update_config))
             .route("/admin/api/stats", web::get().to(admin::get_stats))
             .route("/admin/api/logs", web::get().to(admin::list_call_logs))
+            .route("/admin/api/latency-leaderboard", web::get().to(admin::list_latency_leaderboard))
             // 静态文件（管理后台前端）
             .service(fs::Files::new("/admin", "static").index_file("index.html"))
             // API代理（必须放在最后，捕获所有其他路径）

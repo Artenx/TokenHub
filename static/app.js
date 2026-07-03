@@ -176,6 +176,12 @@ function initEventListeners() {
         btnRefreshLogs.addEventListener('click', loadCallLogs);
     }
 
+    // 延迟排行榜刷新
+    const btnRefreshLatency = document.getElementById('btn-refresh-latency');
+    if (btnRefreshLatency) {
+        btnRefreshLatency.addEventListener('click', loadLatencyLeaderboard);
+    }
+
     // 密码表单
     document.getElementById('password-form').addEventListener('submit', handleChangePassword);
 
@@ -1437,6 +1443,8 @@ function switchTab(tab) {
         loadApisPage();
     } else if (tab === 'call-logs') {
         loadCallLogs();
+    } else if (tab === 'latency-leaderboard') {
+        loadLatencyLeaderboard();
     }
 }
 
@@ -3251,6 +3259,59 @@ function renderCallLogs(logs) {
                 <td><span class="${statusClass}">${statusText}</span></td>
                 <td>${log.duration_ms !== undefined ? log.duration_ms : '-'}</td>
                 <td>${errorMsg}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// ========== 延迟排行榜 ==========
+
+async function loadLatencyLeaderboard() {
+    const tbody = document.getElementById('latency-leaderboard-body');
+    if (!tbody) return;
+
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: var(--text-secondary);">加载中...</td></tr>';
+
+    try {
+        const res = await fetch(`${API_BASE}/latency-leaderboard`);
+        if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        renderLatencyLeaderboard(data.leaderboard || []);
+    } catch (e) {
+        console.error('加载延迟排行榜失败:', e);
+        tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; color: var(--danger);">加载失败: ${escapeHtml(e.message)}</td></tr>`;
+    }
+}
+
+function renderLatencyLeaderboard(stats) {
+    const tbody = document.getElementById('latency-leaderboard-body');
+    if (!tbody) return;
+
+    if (!stats || stats.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: var(--text-secondary);">暂无延迟数据</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = stats.map((item, index) => {
+        const rank = index + 1;
+        const rankClass = rank === 1 ? 'rank-1' : rank === 2 ? 'rank-2' : rank === 3 ? 'rank-3' : '';
+        const enabledText = item.enabled ? '启用' : '禁用';
+        const enabledClass = item.enabled ? 'status-active' : 'status-disabled';
+        const formatMs = (ms) => ms > 0 ? `${ms}ms` : '-';
+        return `
+            <tr>
+                <td><span class="latency-rank ${rankClass}">${rank}</span></td>
+                <td>${escapeHtml(item.endpoint_name)}</td>
+                <td><span class="${enabledClass}">${enabledText}</span></td>
+                <td>${item.samples || 0}</td>
+                <td><strong>${formatMs(item.avg_ms)}</strong></td>
+                <td>${formatMs(item.min_ms)}</td>
+                <td>${formatMs(item.max_ms)}</td>
+                <td>${formatMs(item.p50_ms)}</td>
+                <td>${formatMs(item.p90_ms)}</td>
+                <td>${formatMs(item.p95_ms)}</td>
             </tr>
         `;
     }).join('');

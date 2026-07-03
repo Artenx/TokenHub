@@ -581,3 +581,18 @@ pub struct ApiCallLog {
     /// 请求耗时（毫秒）
     pub duration_ms: u64,
 }
+
+/// 端点延迟统计
+#[derive(Debug, Clone, Serialize)]
+pub struct EndpointLatencyStats {
+    pub endpoint_id: String,
+    pub endpoint_name: String,
+    pub enabled: bool,
+    pub samples: usize,
+    pub avg_ms: u64,
+    pub min_ms: u64,
+    pub max_ms: u64,
+    pub p50_ms: u64,
+    pub p90_ms: u64,
+    pub p95_ms: u64,
+}

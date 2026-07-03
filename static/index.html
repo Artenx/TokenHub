@@ -61,6 +61,7 @@
                     <button class="nav-btn" data-tab="pools" role="tab" aria-selected="false" aria-controls="tab-pools">池管理</button>
                     <button class="nav-btn" data-tab="api-mgmt" role="tab" aria-selected="false" aria-controls="tab-api-mgmt">接口管理</button>
                     <button class="nav-btn" data-tab="call-logs" role="tab" aria-selected="false" aria-controls="tab-call-logs">调用日志</button>
+                    <button class="nav-btn" data-tab="latency-leaderboard" role="tab" aria-selected="false" aria-controls="tab-latency-leaderboard">延迟排行榜</button>
                     <button class="nav-btn" data-tab="settings" role="tab" aria-selected="false" aria-controls="tab-settings">设置</button>
                 </nav>
                 <div class="sidebar-footer">
@@ -244,6 +245,42 @@
                                     <tbody id="call-logs-body">
                                         <tr>
                                             <td colspan="9" style="text-align: center; color: var(--text-secondary);">暂无调用日志</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 延迟排行榜 -->
+                    <div id="tab-latency-leaderboard" class="tab-content">
+                        <div class="section">
+                            <div class="section-header">
+                                <h2>端点延迟排行榜</h2>
+                                <button id="btn-refresh-latency" class="btn btn-primary btn-small">刷新</button>
+                            </div>
+                            <p style="font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 16px;">
+                                统计最近 100 次请求的延迟数据，按平均延迟升序排列。数值越小响应越快。
+                            </p>
+                            <div class="table-responsive">
+                                <table class="data-table" id="latency-leaderboard-table">
+                                    <thead>
+                                        <tr>
+                                            <th>排名</th>
+                                            <th>端点名称</th>
+                                            <th>状态</th>
+                                            <th>样本数</th>
+                                            <th>平均延迟</th>
+                                            <th>最小延迟</th>
+                                            <th>最大延迟</th>
+                                            <th>P50</th>
+                                            <th>P90</th>
+                                            <th>P95</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="latency-leaderboard-body">
+                                        <tr>
+                                            <td colspan="10" style="text-align: center; color: var(--text-secondary);">暂无延迟数据</td>
                                         </tr>
                                     </tbody>
                                 </table>

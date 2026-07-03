@@ -949,3 +949,26 @@ pub async fn list_call_logs(
         "logs": logs
     })))
 }
+
+/// 获取端点延迟排行榜
+pub async fn list_latency_leaderboard(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    let stats = state.get_latency_stats();
+    let mut sorted = stats;
+    sorted.sort_by(|a, b| {
+        // 无样本的端点排最后
+        match (a.samples, b.samples) {
+            (0, 0) => a.endpoint_name.cmp(&b.endpoint_name),
+            (0, _) => std::cmp::Ordering::Greater,
+            (_, 0) => std::cmp::Ordering::Less,
+            (_, _) => a.avg_ms.cmp(&b.avg_ms),
+        }
+    });
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "success": true,
+        "leaderboard": sorted
+    })))
+}
