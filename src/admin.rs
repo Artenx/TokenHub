@@ -381,23 +381,25 @@ pub async fn check_endpoint(
     };
 
     // 发送测试请求，设置10秒超时
-    match request_builder
+    let start = std::time::Instant::now();
+    let result = request_builder
         .timeout(std::time::Duration::from_secs(10))
         .body(chat_body.to_string())
         .send()
-        .await
-    {
+        .await;
+
+    let duration_ms = start.elapsed().as_millis() as u64;
+
+    let (status_code, status_str, error_msg, response_json) = match result {
         Ok(response) => {
             let status = response.status();
             let response_text = response.text().await.unwrap_or_default();
+            let sc = status.as_u16();
             
             if status.is_success() {
-                // 解析响应获取模型回复
                 let reply = if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response_text) {
-                    // OpenAI 格式
                     json["choices"][0]["message"]["content"].as_str()
                         .or_else(|| {
-                            // Anthropic 格式
                             json["content"][0]["text"].as_str()
                         })
                         .unwrap_or("无回复")
@@ -405,31 +407,46 @@ pub async fn check_endpoint(
                 } else {
                     "响应解析失败".to_string()
                 };
-                
-                Ok(HttpResponse::Ok().json(serde_json::json!({
+                (sc, "success".to_string(), None, serde_json::json!({
                     "success": true,
                     "message": reply,
-                    "status": status.as_u16(),
+                    "status": sc,
                     "tested_url": chat_url
-                })))
+                }))
             } else {
-                Ok(HttpResponse::Ok().json(serde_json::json!({
+                (sc, "error".to_string(), Some(format!("HTTP {}", status)), serde_json::json!({
                     "success": false,
                     "message": format!("请求失败 (HTTP {}): {}", status, &response_text[..response_text.len().min(200)]),
-                    "status": status.as_u16(),
+                    "status": sc,
                     "tested_url": chat_url
-                })))
+                }))
             }
         }
         Err(e) => {
-            Ok(HttpResponse::Ok().json(serde_json::json!({
+            (0, "error".to_string(), Some(e.to_string()), serde_json::json!({
                 "success": false,
                 "message": format!("连接失败: {}", e),
                 "status": 0,
                 "tested_url": chat_url
-            })))
+            }))
         }
-    }
+    };
+
+    state.add_call_log(crate::models::ApiCallLog {
+        timestamp: chrono::Utc::now(),
+        client_ip: "admin".to_string(),
+        method: "POST".to_string(),
+        path: chat_url.clone(),
+        api_prefix: Some(format!("[对话测试] {}", ep.name)),
+        endpoint_id: None,
+        endpoint_name: Some(ep.name.clone()),
+        status_code,
+        status: status_str,
+        error_message: error_msg,
+        duration_ms,
+    });
+
+    Ok(HttpResponse::Ok().json(response_json))
 }
 
 // ========== 池管理 ==========
