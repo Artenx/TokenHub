@@ -61,11 +61,7 @@ impl InputValidator {
     }
 
     /// 验证请求次数限制
-    pub fn validate_request_limit(limit: u64) -> Result<(), String> {
-        // 0 表示无上限，其他值有合理范围
-        if limit > 0 && limit < 10 {
-            return Err("请求次数限制不能小于10".to_string());
-        }
+    pub fn validate_request_limit(_limit: u64) -> Result<(), String> {
         Ok(())
     }
 
