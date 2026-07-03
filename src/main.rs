@@ -62,19 +62,22 @@ async fn api_proxy(
         Err(e) => (e.status_code(), "error".to_string(), Some(e.to_string())),
     };
 
-    state.add_call_log(ApiCallLog {
-        timestamp: Utc::now(),
-        client_ip,
-        method,
-        path: full_path,
-        api_prefix,
-        endpoint_id: None,
-        endpoint_name: None,
-        status_code,
-        status,
-        error_message,
-        duration_ms,
-    });
+    // 只记录命中对外 API 前缀的请求，过滤扫描器流量
+    if api_prefix.is_some() {
+        state.add_call_log(ApiCallLog {
+            timestamp: Utc::now(),
+            client_ip,
+            method,
+            path: full_path,
+            api_prefix,
+            endpoint_id: None,
+            endpoint_name: None,
+            status_code,
+            status,
+            error_message,
+            duration_ms,
+        });
+    }
 
     result
 }
