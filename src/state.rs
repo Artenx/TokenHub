@@ -875,7 +875,15 @@ impl AppState {
     // ========== 调用日志管理 ==========
 
     /// 添加一条 API 调用日志，最多保留 50 条最近记录
-    pub fn add_call_log(&self, log: ApiCallLog) {
+    pub fn add_call_log(&self, mut log: ApiCallLog) {
+        // 兜底：如果只有 endpoint_id 没有 name，从端点配置中补全名称
+        if log.endpoint_id.is_some() && log.endpoint_name.is_none() {
+            let endpoint_id = log.endpoint_id.as_ref().unwrap();
+            let endpoints = self.endpoints.read();
+            if let Some(ep) = endpoints.get(endpoint_id) {
+                log.endpoint_name = Some(ep.config.name.clone());
+            }
+        }
         let mut logs = self.call_logs.write();
         logs.push_front(log);
         while logs.len() > 50 {
