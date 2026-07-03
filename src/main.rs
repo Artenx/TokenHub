@@ -37,6 +37,13 @@ async fn api_proxy(
     // 提前获取命中的 API 前缀，用于日志记录
     let api_prefix = state.match_exposed_api(&path).map(|a| a.prefix);
 
+    // 对未命中对外 API 的请求进行 IP 限流，防御扫描器
+    if api_prefix.is_none() && !state.check_rate_limit(&client_ip) {
+        return Ok(HttpResponse::TooManyRequests()
+            .content_type("text/plain")
+            .body("Too Many Requests"));
+    }
+
     // API密钥认证
     let auth_result = auth::check_api_auth(&state, &req);
 
@@ -163,6 +170,16 @@ async fn main() -> std::io::Result<()> {
                     tracing::warn!("定时更新端点 {} 模型缓存失败: {}", endpoint_id, e);
                 }
             }
+        }
+    });
+
+    // 启动 IP 限流清理任务（每5分钟清理过期条目）
+    let rate_state = reset_state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(300));
+        loop {
+            interval.tick().await;
+            rate_state.cleanup_rate_limits();
         }
     });
 

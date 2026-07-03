@@ -4,8 +4,16 @@ use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 
 use tracing::{debug, info, warn};
+
+/// IP 限流条目
+struct RateLimitEntry {
+    window_start: Instant,
+    count: u64,
+    blocked_until: Option<Instant>,
+}
 
 /// 应用程序共享状态
 pub struct AppState {
@@ -33,6 +41,8 @@ pub struct AppState {
     pub admin_sessions: RwLock<HashSet<String>>,
     /// 最近 API 调用日志（最多保留 50 条）
     pub call_logs: RwLock<VecDeque<ApiCallLog>>,
+    /// IP 请求频率限制
+    pub rate_limits: RwLock<HashMap<String, RateLimitEntry>>,
 }
 
 impl AppState {
@@ -64,6 +74,7 @@ impl AppState {
             save_state_mutex: tokio::sync::Mutex::new(()),
             admin_sessions: RwLock::new(HashSet::new()),
             call_logs: RwLock::new(VecDeque::new()),
+            rate_limits: RwLock::new(HashMap::new()),
         };
 
         // 从 state.json 恢复运行时状态
@@ -784,6 +795,62 @@ impl AppState {
     /// 获取最近 50 条 API 调用日志
     pub fn get_call_logs(&self) -> Vec<ApiCallLog> {
         self.call_logs.read().iter().cloned().collect()
+    }
+
+    // ========== IP 限流 ==========
+
+    /// 检查 IP 请求频率，返回 true 表示允许，false 表示被限流拒绝
+    pub fn check_rate_limit(&self, ip: &str) -> bool {
+        let mut limits = self.rate_limits.write();
+        let now = Instant::now();
+        let entry = limits.entry(ip.to_string()).or_insert(RateLimitEntry {
+            window_start: now,
+            count: 0,
+            blocked_until: None,
+        });
+
+        // 检查是否处于封禁期（连续触发限流后封禁 60 秒）
+        if let Some(blocked) = entry.blocked_until {
+            if now < blocked {
+                return false;
+            }
+            // 封禁期结束，重置
+            entry.blocked_until = None;
+            entry.window_start = now;
+            entry.count = 0;
+        }
+
+        // 1 秒时间窗口
+        if now.duration_since(entry.window_start) > std::time::Duration::from_secs(1) {
+            entry.window_start = now;
+            entry.count = 0;
+        }
+
+        entry.count += 1;
+
+        // 每秒超过 3 个请求则限流，累计 10 次触发则封禁 60 秒
+        if entry.count > 3 {
+            if entry.count > 10 {
+                entry.blocked_until = Some(now + std::time::Duration::from_secs(60));
+            }
+            return false;
+        }
+
+        true
+    }
+
+    /// 清理过期的限流条目
+    pub fn cleanup_rate_limits(&self) {
+        let mut limits = self.rate_limits.write();
+        let now = Instant::now();
+        limits.retain(|_, entry| {
+            if let Some(blocked) = entry.blocked_until {
+                now < blocked
+            } else {
+                // 保留最近 5 分钟内活跃的条目
+                now.duration_since(entry.window_start) < std::time::Duration::from_secs(300)
+            }
+        });
     }
 
     // ========== 模型缓存管理 ==========
