@@ -245,7 +245,7 @@ impl RetryContext {
         let max_retries = match retry_mode {
             RetryMode::None => 1,
             RetryMode::Same => retry_count,
-            RetryMode::Pool => retry_count * available_count,
+            RetryMode::Pool => retry_count.min(available_count),
         };
 
         Ok(Self {
@@ -292,6 +292,9 @@ impl RetryContext {
     fn record_error(&mut self, e: AppError) -> bool {
         let retryable = e.is_retryable();
         self.last_error = Some(e);
+        if self.retry_mode == RetryMode::Pool {
+            return true;
+        }
         retryable && self.retry_mode != RetryMode::None
     }
 
