@@ -9,10 +9,12 @@
 - **Multi-endpoint pools** - Group endpoints into pools with passthrough or mapping model name modes
 - **Load balancing** - Round Robin, Failover, and Random algorithms with automatic retry on failure
 - **Token quota management** - Supports unlimited, manual reset, daily auto-reset, and 5-hour rolling window
-- **Request count limit** - Independent request cap per endpoint, supports manual/daily/5-hour rolling reset
+- **Request count limit** - Independent request cap per endpoint, supports manual/daily/5-hour rolling/per-minute reset
 - **Sliding window algorithm** - 5-hour rolling window, old consumption auto-expires, no manual reset needed
+- **Endpoint latency stats** - Collects per-endpoint latency, exposes P50/P90/P95 aggregates and a leaderboard
+- **IP rate limiting** - Rate-limits unrecognized requests by IP to mitigate scanner traffic
 - **Custom routing** - Configure external API prefixes with independent authentication keys
-- **Web dashboard** - Visual management of endpoints, pools, APIs, and system settings
+- **Web dashboard** - Visual management of endpoints, pools, APIs, latency leaderboard, and system settings
 
 ## Quick Start
 
