@@ -3461,12 +3461,7 @@ function updateRetryModeDescription() {
     // 更新重试次数输入框显示
     const countGroup = document.getElementById('retry-count-group');
     if (countGroup) {
-        const isEditing = !!document.getElementById('pool-id').value;
-        if (!isEditing) {
-            countGroup.style.display = 'none';
-        } else {
-            countGroup.style.display = selectedMode === 'none' ? 'none' : 'block';
-        }
+        countGroup.style.display = selectedMode === 'none' ? 'none' : 'block';
     }
 }
 
