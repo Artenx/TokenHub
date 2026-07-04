@@ -219,6 +219,19 @@ fn build_target_url(base_url: &str, path: &str) -> String {
 
 // ========== 公共重试逻辑 ==========
 
+/// 端点调用失败的原始错误信息，用于调用日志展示
+struct EndpointCallError {
+    error: AppError,
+    /// 端点直接返回的原始报错内容（如响应体中的 error.message）
+    raw_message: Option<String>,
+}
+
+impl From<AppError> for EndpointCallError {
+    fn from(error: AppError) -> Self {
+        Self { error, raw_message: None }
+    }
+}
+
 /// 重试循环的上下文
 struct RetryContext {
     exposed_api: ExposedApi,
@@ -227,6 +240,8 @@ struct RetryContext {
     retry_mode: RetryMode,
     max_retries: usize,
     last_error: Option<AppError>,
+    /// 最后一个端点的原始报错内容
+    last_raw_error: Option<String>,
     tried_ids: Vec<String>,
     first_endpoint_id: Option<String>,
 }
@@ -255,6 +270,7 @@ impl RetryContext {
             retry_mode,
             max_retries,
             last_error: None,
+            last_raw_error: None,
             tried_ids: Vec::new(),
             first_endpoint_id: None,
         })
@@ -289,9 +305,13 @@ impl RetryContext {
     }
 
     /// 记录错误并判断是否继续重试
-    fn record_error(&mut self, e: AppError) -> bool {
+    /// raw_message 为端点直接返回的原始报错内容，供调用日志展示
+    fn record_error(&mut self, e: AppError, raw_message: Option<String>) -> bool {
         let retryable = e.is_retryable();
         self.last_error = Some(e);
+        if raw_message.is_some() {
+            self.last_raw_error = raw_message;
+        }
         if self.retry_mode == RetryMode::Pool {
             return true;
         }
@@ -415,7 +435,7 @@ pub async fn forward_request(
             // 端点刚好被耗尽，当作可重试错误继续选择其他端点
             let e = AppError::Proxy(format!("端点 {} 额度已耗尽", endpoint.config.name));
             state.increment_endpoint_errors(&endpoint_id);
-            if !ctx.record_error(e) {
+            if !ctx.record_error(e, None) {
                 result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
                 break;
             }
@@ -431,7 +451,7 @@ pub async fn forward_request(
                 warn!("端点 {} 模型名称处理失败: {}", endpoint.config.name, e);
                 state.increment_endpoint_errors(&endpoint_id);
                 state.release_endpoint_request(&endpoint_id);
-                if !ctx.record_error(e) {
+                if !ctx.record_error(e, None) {
                     result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
                     break;
                 }
@@ -444,11 +464,11 @@ pub async fn forward_request(
                 result = Some(Ok(response));
                 break;
             }
-            Err(e) => {
-                warn!("端点 {} 请求失败: {}", endpoint.config.name, e);
+            Err(EndpointCallError { error, raw_message }) => {
+                warn!("端点 {} 请求失败: {}", endpoint.config.name, error);
                 state.increment_endpoint_errors(&endpoint_id);
                 state.release_endpoint_request(&endpoint_id);
-                if !ctx.record_error(e) {
+                if !ctx.record_error(error, raw_message) {
                     result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
                     break;
                 }
@@ -457,7 +477,7 @@ pub async fn forward_request(
     }
 
     // 保留最后一个端点直接返回的错误，用于调用日志展示
-    let last_endpoint_error = ctx.last_error.clone();
+    let last_raw_error = ctx.last_raw_error.clone();
     let result = result.unwrap_or_else(|| Err(ctx.into_final_error()));
 
     // 只记录命中对外 API 前缀的请求，过滤扫描器流量
@@ -466,9 +486,8 @@ pub async fn forward_request(
             Ok(resp) => (resp.status().as_u16(), "success".to_string(), None),
             Err(e) => {
                 // 优先显示端点直接返回的报错，而非对外接口包装后的统一错误
-                let err_msg = last_endpoint_error
-                    .as_ref()
-                    .map(|le| le.to_string())
+                let err_msg = last_raw_error
+                    .clone()
                     .unwrap_or_else(|| e.to_string());
                 (e.status_code(), "error".to_string(), Some(err_msg))
             }
@@ -532,7 +551,7 @@ pub async fn forward_stream_request(
         if !state.reserve_endpoint_request(&endpoint_id) {
             let e = AppError::Proxy(format!("端点 {} 额度已耗尽", endpoint.config.name));
             state.increment_endpoint_errors(&endpoint_id);
-            if !ctx.record_error(e) {
+            if !ctx.record_error(e, None) {
                 result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
                 break;
             }
@@ -549,7 +568,7 @@ pub async fn forward_stream_request(
                 warn!("端点 {} 模型名称处理失败: {}", endpoint.config.name, e);
                 state.increment_endpoint_errors(&endpoint_id);
                 state.release_endpoint_request(&endpoint_id);
-                if !ctx.record_error(e) {
+                if !ctx.record_error(e, None) {
                     result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
                     break;
                 }
@@ -579,7 +598,7 @@ pub async fn forward_stream_request(
             Err(e) => {
                 state.increment_endpoint_errors(&endpoint_id);
                 state.release_endpoint_request(&endpoint_id);
-                if !ctx.record_error(e) {
+                if !ctx.record_error(e, None) {
                     result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
                     break;
                 }
@@ -601,7 +620,7 @@ pub async fn forward_stream_request(
                 AppError::Proxy(format!("上游返回状态 {}: {}", resp_status, sanitized))
             };
             state.release_endpoint_request(&endpoint_id);
-            if !ctx.record_error(e) {
+            if !ctx.record_error(e, Some(sanitized)) {
                 result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
                 break;
             }
@@ -621,7 +640,7 @@ pub async fn forward_stream_request(
                 state.increment_endpoint_errors(&endpoint_id);
                 let e = AppError::Proxy(format!("读取响应流失败: {}", e));
                 state.release_endpoint_request(&endpoint_id);
-                if !ctx.record_error(e) {
+                if !ctx.record_error(e, None) {
                     result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
                     break;
                 }
@@ -634,7 +653,7 @@ pub async fn forward_stream_request(
                 state.increment_endpoint_errors(&endpoint_id);
                 let e = AppError::Proxy("上游返回空响应".to_string());
                 state.release_endpoint_request(&endpoint_id);
-                if !ctx.record_error(e) {
+                if !ctx.record_error(e, None) {
                     result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
                     break;
                 }
@@ -649,7 +668,7 @@ pub async fn forward_stream_request(
             state.increment_endpoint_errors(&endpoint_id);
             let e = AppError::Proxy(format!("上游错误 [{}]: {}", error_code, error_msg));
             state.release_endpoint_request(&endpoint_id);
-            if !ctx.record_error(e) {
+            if !ctx.record_error(e, Some(error_msg)) {
                 result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
                 break;
             }
@@ -767,7 +786,7 @@ pub async fn forward_stream_request(
     }
 
     // 保留最后一个端点直接返回的错误，用于调用日志展示
-    let last_endpoint_error = ctx.last_error.clone();
+    let last_raw_error = ctx.last_raw_error.clone();
     let result = result.unwrap_or_else(|| Err(ctx.into_final_error()));
 
     // 只记录命中对外 API 前缀的请求，过滤扫描器流量
@@ -776,9 +795,8 @@ pub async fn forward_stream_request(
             Ok(resp) => (resp.status().as_u16(), "success".to_string(), None),
             Err(e) => {
                 // 优先显示端点直接返回的报错，而非对外接口包装后的统一错误
-                let err_msg = last_endpoint_error
-                    .as_ref()
-                    .map(|le| le.to_string())
+                let err_msg = last_raw_error
+                    .clone()
                     .unwrap_or_else(|| e.to_string());
                 (e.status_code(), "error".to_string(), Some(err_msg))
             }
@@ -809,7 +827,7 @@ async fn forward_to_endpoint(
     endpoint: &EndpointState,
     path: &str,
     client_api_type: &ApiType,
-) -> Result<HttpResponse, AppError> {
+) -> Result<HttpResponse, EndpointCallError> {
     let target_path = crate::converter::convert_path(path, client_api_type, &endpoint.config.api_type);
     let target_url = build_target_url(&endpoint.config.url, &target_path);
     debug!("转发到: {} (客户端格式: {:?}, 端点格式: {:?})", target_url, client_api_type, endpoint.config.api_type);
@@ -839,10 +857,15 @@ async fn forward_to_endpoint(
         state.record_latency(&endpoint.config.id, duration_ms);
         error!("端点 {} 返回错误状态 {}: {}", endpoint.config.name, status, error_body);
         let sanitized = sanitize_error_body(&error_body);
-        if status.is_client_error() && status.as_u16() != 429 {
-            return Err(AppError::UpstreamError(format!("上游返回状态 {}: {}", status, sanitized)));
-        }
-        return Err(AppError::Proxy(format!("上游返回状态 {}: {}", status, sanitized)));
+        let error = if status.is_client_error() && status.as_u16() != 429 {
+            AppError::UpstreamError(format!("上游返回状态 {}: {}", status, sanitized))
+        } else {
+            AppError::Proxy(format!("上游返回状态 {}: {}", status, sanitized))
+        };
+        return Err(EndpointCallError {
+            error,
+            raw_message: Some(sanitized),
+        });
     }
 
     let response_body = response.bytes().await.map_err(|e| AppError::Proxy(format!("读取响应失败: {}", e)))?;
@@ -851,7 +874,10 @@ async fn forward_to_endpoint(
 
     if let Some((error_code, error_msg)) = detect_response_error(&response_body) {
         error!("端点 {} 响应中包含错误 [{}]: {}", endpoint.config.name, error_code, error_msg);
-        return Err(AppError::Proxy(format!("上游错误 [{}]: {}", error_code, error_msg)));
+        return Err(EndpointCallError {
+            error: AppError::Proxy(format!("上游错误 [{}]: {}", error_code, error_msg)),
+            raw_message: Some(error_msg),
+        });
     }
 
     let tokens_used = parse_token_usage(&response_body, &endpoint.config.api_type);
