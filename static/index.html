@@ -321,7 +321,7 @@
                     <h2 id="models-modal-title">可用模型列表</h2>
                     <button class="modal-close">&times;</button>
                 </div>
-                <div style="margin-bottom: 16px;">
+                <div id="test-endpoint-selector-wrapper" style="margin-bottom: 16px; display: none;">
                     <label style="display: block; font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 6px;">测试端点</label>
                     <select id="test-endpoint-select" style="width: 100%;">
                         <option value="">选择端点...</option>
@@ -644,6 +644,12 @@
                 </div>
                 <!-- 配置区域 -->
                 <div id="pool-test-config">
+                    <div style="margin-bottom: 16px;">
+                        <label style="display: block; font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 6px;">选择端点</label>
+                        <select id="pool-test-endpoint-select" style="width: 100%;">
+                            <option value="">选择端点...</option>
+                        </select>
+                    </div>
                     <div style="margin-bottom: 16px;">
                         <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 10px 14px; background: var(--bg-tertiary); border-radius: var(--radius-sm); margin-bottom: 8px;">
                             <input type="radio" name="pool-test-mode" value="auto" checked onchange="onPoolTestModeChange()">

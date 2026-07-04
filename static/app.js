@@ -266,6 +266,14 @@ function initEventListeners() {
         btnStartPoolTest.addEventListener('click', startPoolTest);
     }
 
+    // 池测试端点选择器切换时重新加载模型列表
+    const poolTestEndpointSelect = document.getElementById('pool-test-endpoint-select');
+    if (poolTestEndpointSelect) {
+        poolTestEndpointSelect.addEventListener('change', () => {
+            loadPoolTestModelsForEndpoint(poolTestEndpointSelect.value);
+        });
+    }
+
     // 对话测试按钮
     document.getElementById('btn-check-endpoint').addEventListener('click', handleCheckEndpoint);
 
@@ -859,13 +867,63 @@ function renderEndpointsList() {
     }).join('');
 }
 
-// 端点卡片对话测试 - 弹出模型选择弹窗，支持切换端点
+// 端点卡片对话测试 - 先获取模型列表让用户选择
 async function quickTestEndpoint(id, name) {
-    populateTestEndpointSelector(id);
-    document.getElementById('models-modal-title').textContent = `对话测试 - ${escapeHtml(name)}`;
+    const modelsList = document.getElementById('models-list');
+    const modelsModalTitle = document.getElementById('models-modal-title');
+    const modelsModalFooter = document.getElementById('models-modal-footer');
+
+    if (modelsList) {
+        modelsList.innerHTML = '<p style="color: var(--text-secondary); padding: 16px; text-align: center;">加载模型列表...</p>';
+    }
+    if (modelsModalFooter) {
+        modelsModalFooter.style.display = 'none';
+    }
+    if (modelsModalTitle) {
+        modelsModalTitle.textContent = `选择测试模型 - ${escapeHtml(name)}`;
+    }
     clearApiTestData();
+    showTestEndpointSelector(false);
     showModal('models-modal');
-    await loadModelsForSelectedEndpoint();
+
+    try {
+        const epRes = await fetch(`${API_BASE}/endpoints/${encodeURIComponent(id)}`);
+        if (!epRes.ok) throw new Error('获取端点信息失败');
+        const fullEp = await epRes.json();
+        const config = fullEp.config;
+
+        const data = {
+            name: config.name,
+            url: config.url,
+            api_type: config.api_type,
+            api_key: config.api_key,
+            token_limit: 1000,
+            reset_policy: 'manual',
+            enabled: true
+        };
+
+        const res = await fetch(`${API_BASE}/endpoints/models`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        const result = await res.json();
+
+        if (result.success && result.models && result.models.length > 0) {
+            renderModelSelectionList(result.models, data);
+            if (modelsModalFooter) {
+                modelsModalFooter.style.display = 'block';
+            }
+        } else {
+            if (modelsList) {
+                modelsList.innerHTML = `<p style="color: var(--danger); padding: 16px; text-align: center;">获取模型列表失败: ${escapeHtml(result.message || '未知错误')}</p>`;
+            }
+        }
+    } catch (e) {
+        if (modelsList) {
+            modelsList.innerHTML = `<p style="color: var(--danger); padding: 16px; text-align: center;">请求失败: ${escapeHtml(e.message)}</p>`;
+        }
+    }
 }
 
 // 添加端点到指定池
@@ -1103,7 +1161,7 @@ async function handleBrowseModelsForm() {
     btn.disabled = false;
 }
 
-// 对话测试 - 先选择模型（支持切换端点）
+// 对话测试 - 先选择模型
 async function handleCheckEndpoint() {
     const data = {
         name: document.getElementById('ep-name').value || 'test',
@@ -1124,18 +1182,45 @@ async function handleCheckEndpoint() {
         return;
     }
 
-    const epId = document.getElementById('ep-id').value;
-    populateTestEndpointSelector(epId || null);
-    document.getElementById('models-modal-title').textContent = '选择测试模型';
+    const modelsList = document.getElementById('models-list');
+    const modelsModalFooter = document.getElementById('models-modal-footer');
+    const modelsModalTitle = document.getElementById('models-modal-title');
+    
+    if (modelsList) {
+        modelsList.innerHTML = '<p style="color: var(--text-secondary); padding: 16px; text-align: center;">加载模型列表...</p>';
+    }
+    if (modelsModalFooter) {
+        modelsModalFooter.style.display = 'none';
+    }
+    if (modelsModalTitle) {
+        modelsModalTitle.textContent = '选择测试模型';
+    }
     clearApiTestData();
+    showTestEndpointSelector(false);
     showModal('models-modal');
 
-    // 编辑已有端点时，使用下拉选中的端点数据加载模型
-    // 新建端点时，使用表单数据加载模型
-    if (epId) {
-        await loadModelsForSelectedEndpoint();
-    } else {
-        await loadModelsWithData(data);
+    try {
+        const res = await fetch(`${API_BASE}/endpoints/models`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        const result = await res.json();
+        
+        if (result.success && result.models && result.models.length > 0) {
+            renderModelSelectionList(result.models, data);
+            if (modelsModalFooter) {
+                modelsModalFooter.style.display = 'block';
+            }
+        } else {
+            if (modelsList) {
+                modelsList.innerHTML = `<p style="color: var(--danger); padding: 16px; text-align: center;">获取模型列表失败: ${escapeHtml(result.message || '未知错误')}</p>`;
+            }
+        }
+    } catch (e) {
+        if (modelsList) {
+            modelsList.innerHTML = `<p style="color: var(--danger); padding: 16px; text-align: center;">请求失败: ${escapeHtml(e.message)}</p>`;
+        }
     }
 }
 
@@ -1247,6 +1332,14 @@ function clearApiTestData() {
     if (container) {
         delete container.dataset.apiData;
         delete container.dataset.apiTestContext;
+    }
+}
+
+// 显示/隐藏测试端点选择器
+function showTestEndpointSelector(show) {
+    const select = document.getElementById('test-endpoint-select');
+    if (select && select.parentElement) {
+        select.parentElement.style.display = show ? 'block' : 'none';
     }
 }
 
@@ -2339,20 +2432,66 @@ async function handlePoolTest(poolId, poolName) {
     // 重置到配置阶段
     showConfigPhase();
 
-    // 加载模型列表
+    const endpointSelect = document.getElementById('pool-test-endpoint-select');
     const modelsList = document.getElementById('pool-test-models-list');
-    modelsList.innerHTML = '<p style="color: var(--text-secondary); padding: 16px; text-align: center;">加载模型列表...</p>';
+    modelsList.innerHTML = '<p style="color: var(--text-secondary); padding: 16px; text-align: center;">加载中...</p>';
 
     showModal('pool-test-modal');
 
     try {
-        const res = await fetch(`${API_BASE}/pools/${poolId}/models`);
-        const data = await res.json();
-        if (data.success && data.models) {
-            currentPoolTestModels = data.models;
-            renderPoolTestModelList(data.models);
+        const statsRes = await fetch(`${API_BASE}/stats`);
+        const stats = await statsRes.json();
+        const poolEndpoints = (stats.endpoints || []).filter(ep => (ep.pool_ids || []).includes(poolId));
+        
+        if (poolEndpoints.length > 0) {
+            endpointSelect.innerHTML = poolEndpoints.map(ep =>
+                `<option value="${escapeAttr(ep.id)}">${escapeHtml(ep.name)}</option>`
+            ).join('');
+            await loadPoolTestModelsForEndpoint(endpointSelect.value);
         } else {
-            modelsList.innerHTML = '<p style="color: var(--text-tertiary); padding: 16px; text-align: center;">无法获取模型列表，将使用自动模式</p>';
+            endpointSelect.innerHTML = '<option value="">无可用端点</option>';
+            modelsList.innerHTML = '<p style="color: var(--text-tertiary); padding: 16px; text-align: center;">池中无端点，请先添加端点</p>';
+        }
+    } catch (e) {
+        modelsList.innerHTML = `<p style="color: #f44336; padding: 16px;">加载失败: ${escapeHtml(e.message)}</p>`;
+    }
+}
+
+async function loadPoolTestModelsForEndpoint(endpointId) {
+    const modelsList = document.getElementById('pool-test-models-list');
+    if (!endpointId) {
+        modelsList.innerHTML = '<p style="color: var(--text-tertiary); padding: 16px; text-align: center;">请先选择端点</p>';
+        currentPoolTestModels = [];
+        return;
+    }
+    modelsList.innerHTML = '<p style="color: var(--text-secondary); padding: 16px; text-align: center;">加载模型列表...</p>';
+    currentPoolTestModels = [];
+
+    try {
+        const epRes = await fetch(`${API_BASE}/endpoints/${encodeURIComponent(endpointId)}`);
+        if (!epRes.ok) throw new Error('获取端点信息失败');
+        const fullEp = await epRes.json();
+        const config = fullEp.config;
+
+        const modelsRes = await fetch(`${API_BASE}/endpoints/models`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name: config.name,
+                url: config.url,
+                api_type: config.api_type,
+                api_key: config.api_key,
+                token_limit: 1000,
+                reset_policy: 'manual',
+                enabled: true
+            })
+        });
+        const result = await modelsRes.json();
+        if (result.success && result.models) {
+            currentPoolTestModels = result.models.map(m => typeof m === 'object' ? m.id : m);
+            renderPoolTestModelList(currentPoolTestModels);
+        } else {
+            modelsList.innerHTML = '<p style="color: var(--text-tertiary); padding: 16px; text-align: center;">无法获取模型列表</p>';
         }
     } catch (e) {
         modelsList.innerHTML = `<p style="color: #f44336; padding: 16px;">加载失败: ${escapeHtml(e.message)}</p>`;
@@ -2733,6 +2872,7 @@ async function handleTestApi() {
 
     // 用池中端点填充选择器
     populateTestEndpointSelectorFromList(poolEndpoints);
+    showTestEndpointSelector(true);
     document.getElementById('models-modal-title').textContent = '选择测试模型';
     clearApiTestData();
     showModal('models-modal');
