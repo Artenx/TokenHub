@@ -711,7 +711,7 @@ pub async fn forward_stream_request(
         }
 
         // 构建原始流（不含调用日志写入）
-        let raw_stream: Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send> = if need_convert {
+        let raw_stream: Box<dyn Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send> = if need_convert {
             let mut converter = crate::converter::StreamConverter::new(ep_api_type.clone(), client_api_type);
             let tracker = usage_tracker.clone();
             let mut buffer = String::new();
