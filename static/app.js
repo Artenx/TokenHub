@@ -3581,7 +3581,7 @@ function renderCallLogs(logs) {
     if (!tbody) return;
 
     if (!logs || logs.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: var(--text-secondary);">暂无调用日志</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="13" style="text-align: center; color: var(--text-secondary);">暂无调用日志</td></tr>';
         return;
     }
 
@@ -3600,6 +3600,9 @@ function renderCallLogs(logs) {
                 <td>${log.status_code || '-'}</td>
                 <td><span class="${statusClass}">${statusText}</span></td>
                 <td>${log.duration_ms !== undefined ? log.duration_ms : '-'}</td>
+                <td>${log.input_tokens !== undefined && log.input_tokens !== null ? formatNumber(log.input_tokens) : '-'}</td>
+                <td>${log.output_tokens !== undefined && log.output_tokens !== null ? formatNumber(log.output_tokens) : '-'}</td>
+                <td>${log.total_tokens !== undefined && log.total_tokens !== null ? formatNumber(log.total_tokens) : '-'}</td>
                 <td>${errorMsg}</td>
             </tr>
         `;

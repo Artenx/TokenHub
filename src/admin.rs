@@ -444,6 +444,9 @@ pub async fn check_endpoint(
         status: status_str,
         error_message: error_msg,
         duration_ms,
+        input_tokens: None,
+        output_tokens: None,
+        total_tokens: None,
     });
 
     Ok(HttpResponse::Ok().json(response_json))
@@ -587,6 +590,9 @@ pub async fn test_endpoint_by_id(
         status: status_str,
         error_message: error_msg,
         duration_ms,
+        input_tokens: None,
+        output_tokens: None,
+        total_tokens: None,
     });
 
     Ok(HttpResponse::Ok().json(response_json))
@@ -871,6 +877,9 @@ pub async fn test_pool_endpoints(
             status: log_status.to_string(),
             error_message: error_msg,
             duration_ms: start.elapsed().as_millis() as u64,
+            input_tokens: None,
+            output_tokens: None,
+            total_tokens: None,
         });
 
         results.push(result);

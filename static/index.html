@@ -228,7 +228,7 @@
                                 <button id="btn-refresh-logs" class="btn btn-primary btn-small">刷新</button>
                             </div>
                             <p style="font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 16px;">
-                                展示最近 50 次 API 调用记录，包括请求时间、调用方 IP、请求路径、响应状态和耗时。
+                                展示最近 50 次 API 调用记录，包括请求时间、调用方 IP、请求路径、响应状态、耗时和 Token 使用量。
                             </p>
                             <div class="table-responsive">
                                 <table class="data-table" id="call-logs-table">
@@ -243,12 +243,15 @@
                                             <th>状态码</th>
                                             <th>状态</th>
                                             <th>耗时(ms)</th>
+                                            <th>输入 Token</th>
+                                            <th>输出 Token</th>
+                                            <th>总 Token</th>
                                             <th>错误信息</th>
                                         </tr>
                                     </thead>
                                     <tbody id="call-logs-body">
                                         <tr>
-                                            <td colspan="10" style="text-align: center; color: var(--text-secondary);">暂无调用日志</td>
+                                            <td colspan="13" style="text-align: center; color: var(--text-secondary);">暂无调用日志</td>
                                         </tr>
                                     </tbody>
                                 </table>

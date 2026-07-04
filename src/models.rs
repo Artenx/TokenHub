@@ -621,6 +621,12 @@ pub struct ApiCallLog {
     pub error_message: Option<String>,
     /// 请求耗时（毫秒）
     pub duration_ms: u64,
+    /// 输入 Token 数量
+    pub input_tokens: Option<u64>,
+    /// 输出 Token 数量
+    pub output_tokens: Option<u64>,
+    /// 总 Token 数量
+    pub total_tokens: Option<u64>,
 }
 
 /// 端点延迟统计

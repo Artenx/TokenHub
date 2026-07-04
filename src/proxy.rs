@@ -406,6 +406,7 @@ pub async fn forward_request(
     let method = req.method().to_string();
     let mut last_endpoint_id: Option<String> = None;
     let mut last_endpoint_name: Option<String> = None;
+    let mut last_token_usage: Option<TokenUsage> = None;
 
     let mut ctx = RetryContext::new(state, path)?;
     let mut result: Option<Result<HttpResponse, AppError>> = None;
@@ -460,8 +461,9 @@ pub async fn forward_request(
         };
 
         match forward_to_endpoint(state, req, &mapped_body, &endpoint, actual_path, &ctx.exposed_api.api_type).await {
-            Ok(response) => {
+            Ok((response, token_usage)) => {
                 result = Some(Ok(response));
+                last_token_usage = Some(token_usage);
                 break;
             }
             Err(EndpointCallError { error, raw_message }) => {
@@ -492,6 +494,9 @@ pub async fn forward_request(
                 (e.status_code(), "error".to_string(), Some(err_msg))
             }
         };
+        let (input_tokens, output_tokens, total_tokens) = last_token_usage
+            .map(|u| (u.input, u.output, u.total))
+            .unwrap_or((None, None, None));
         state.add_call_log(ApiCallLog {
             timestamp: Utc::now(),
             client_ip,
@@ -504,6 +509,9 @@ pub async fn forward_request(
             status,
             error_message,
             duration_ms: start.elapsed().as_millis() as u64,
+            input_tokens,
+            output_tokens,
+            total_tokens,
         });
     }
 
@@ -523,6 +531,8 @@ pub async fn forward_stream_request(
     let method = req.method().to_string();
     let mut last_endpoint_id: Option<String> = None;
     let mut last_endpoint_name: Option<String> = None;
+    // 流式响应的 Token 使用量在请求返回前无法完整获取，后续可扩展为在流结束时异步记录
+    let last_token_usage: Option<TokenUsage> = None;
 
     let mut ctx = RetryContext::new(state.get_ref(), path)?;
     let mut result: Option<Result<HttpResponse, AppError>> = None;
@@ -801,6 +811,9 @@ pub async fn forward_stream_request(
                 (e.status_code(), "error".to_string(), Some(err_msg))
             }
         };
+        let (input_tokens, output_tokens, total_tokens) = last_token_usage
+            .map(|u| (u.input, u.output, u.total))
+            .unwrap_or((None, None, None));
         state.add_call_log(ApiCallLog {
             timestamp: Utc::now(),
             client_ip,
@@ -813,6 +826,9 @@ pub async fn forward_stream_request(
             status,
             error_message,
             duration_ms: start.elapsed().as_millis() as u64,
+            input_tokens,
+            output_tokens,
+            total_tokens,
         });
     }
 
@@ -827,7 +843,7 @@ async fn forward_to_endpoint(
     endpoint: &EndpointState,
     path: &str,
     client_api_type: &ApiType,
-) -> Result<HttpResponse, EndpointCallError> {
+) -> Result<(HttpResponse, TokenUsage), EndpointCallError> {
     let target_path = crate::converter::convert_path(path, client_api_type, &endpoint.config.api_type);
     let target_url = build_target_url(&endpoint.config.url, &target_path);
     debug!("转发到: {} (客户端格式: {:?}, 端点格式: {:?})", target_url, client_api_type, endpoint.config.api_type);
@@ -880,10 +896,11 @@ async fn forward_to_endpoint(
         });
     }
 
-    let tokens_used = parse_token_usage(&response_body, &endpoint.config.api_type);
-    if tokens_used > 0 {
-        state.update_endpoint_tokens(&endpoint.config.id, tokens_used);
-        debug!("端点 {} 消耗 {} tokens", endpoint.config.name, tokens_used);
+    let token_usage = parse_token_usage_detail(&response_body, &endpoint.config.api_type);
+    if let Some(total) = token_usage.total {
+        if total > 0 {
+            state.update_endpoint_tokens(&endpoint.config.id, total);
+        }
     }
 
     // 转换响应体（仅对 chat/completions 和 responses/messages 路径转换，/models 等特殊路径不转换）
@@ -918,40 +935,63 @@ async fn forward_to_endpoint(
         }
     }
 
-    Ok(response_builder.body(final_body))
+    Ok((response_builder.body(final_body), token_usage))
 }
 
-/// 解析响应中的token使用量
-fn parse_token_usage(body: &[u8], api_type: &ApiType) -> u64 {
+/// 详细的 Token 使用量
+#[derive(Debug, Clone, Copy, Default)]
+struct TokenUsage {
+    input: Option<u64>,
+    output: Option<u64>,
+    total: Option<u64>,
+}
+
+/// 解析响应中的token使用量（详细）
+fn parse_token_usage_detail(body: &[u8], api_type: &ApiType) -> TokenUsage {
     let body_str = match std::str::from_utf8(body) {
         Ok(s) => s,
-        Err(_) => return 0,
+        Err(_) => return TokenUsage::default(),
     };
 
     let json: serde_json::Value = match serde_json::from_str(body_str) {
         Ok(v) => v,
-        Err(_) => return 0,
+        Err(_) => return TokenUsage::default(),
     };
 
     match api_type {
         ApiType::OpenAI | ApiType::OpenAIResponses => {
-            json.get("usage")
+            let usage = json.get("usage");
+            let input = usage
+                .and_then(|u| u.get("prompt_tokens"))
+                .and_then(|t| t.as_u64());
+            let output = usage
+                .and_then(|u| u.get("completion_tokens"))
+                .and_then(|t| t.as_u64());
+            let total = usage
                 .and_then(|u| u.get("total_tokens"))
-                .and_then(|t| t.as_u64())
-                .unwrap_or(0)
+                .and_then(|t| t.as_u64());
+            TokenUsage { input, output, total }
         }
         ApiType::Anthropic => {
-            let input = json.get("usage")
+            let usage = json.get("usage");
+            let input = usage
                 .and_then(|u| u.get("input_tokens"))
-                .and_then(|t| t.as_u64())
-                .unwrap_or(0);
-            let output = json.get("usage")
+                .and_then(|t| t.as_u64());
+            let output = usage
                 .and_then(|u| u.get("output_tokens"))
-                .and_then(|t| t.as_u64())
-                .unwrap_or(0);
-            input.saturating_add(output)
+                .and_then(|t| t.as_u64());
+            let total = match (input, output) {
+                (Some(i), Some(o)) => Some(i.saturating_add(o)),
+                _ => None,
+            };
+            TokenUsage { input, output, total }
         }
     }
+}
+
+/// 解析响应中的token使用量（兼容旧接口，返回总数）
+fn parse_token_usage(body: &[u8], api_type: &ApiType) -> u64 {
+    parse_token_usage_detail(body, api_type).total.unwrap_or(0)
 }
 
 #[cfg(test)]
