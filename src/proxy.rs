@@ -245,7 +245,7 @@ impl RetryContext {
         let max_retries = match retry_mode {
             RetryMode::None => 1,
             RetryMode::Same => retry_count,
-            RetryMode::Pool => retry_count.min(available_count),
+            RetryMode::Pool => available_count,
         };
 
         Ok(Self {

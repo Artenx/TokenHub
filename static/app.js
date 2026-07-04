@@ -2981,7 +2981,7 @@ async function editPool(id) {
     document.getElementById('pool-desc').value = pool.description || '';
     document.getElementById('pool-algorithm').value = pool.schedule_algorithm;
     document.getElementById('pool-model-mode').value = pool.model_mode || 'passthrough';
-    document.getElementById('pool-retry-mode').value = pool.retry_mode || 'none';
+    document.getElementById('pool-retry-mode').value = pool.retry_mode || 'pool';
     document.getElementById('pool-retry-count').value = pool.retry_count || 1;
     
     // 更新算法说明

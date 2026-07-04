@@ -38,11 +38,11 @@ pub enum ScheduleAlgorithm {
 #[serde(rename_all = "lowercase")]
 pub enum RetryMode {
     /// 无重试：异常直接返回
-    #[default]
     None,
     /// 原地重试：异常时继续向原端点重试
     Same,
     /// 端点重试：异常时切换到池内其他端点
+    #[default]
     Pool,
 }
 
