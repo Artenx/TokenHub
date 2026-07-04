@@ -1044,18 +1044,6 @@ impl Stream for StreamLogWriter {
     }
 }
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = self.get_mut();
-        let poll = this.inner.as_mut().poll_next(cx);
-        if matches!(&poll, Poll::Ready(None)) {
-            if let Some(cb) = this.on_complete.take() {
-                (cb)();
-            }
-        }
-        poll
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
