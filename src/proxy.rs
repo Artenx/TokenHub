@@ -4,8 +4,11 @@ use crate::scheduler::Scheduler;
 use crate::state::AppState;
 use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::Utc;
-use futures_util::StreamExt;
+use futures_util::{Stream, StreamExt};
 use serde_json::Value;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use tracing::{debug, error, warn};
 
 /// 截断上游错误响应体，防止敏感信息通过错误消息泄露给客户端
@@ -529,10 +532,9 @@ pub async fn forward_stream_request(
     let start = std::time::Instant::now();
     let client_ip = req.connection_info().peer_addr().unwrap_or("unknown").to_string();
     let method = req.method().to_string();
+    let usage_tracker = Arc::new(Mutex::new(None::<TokenUsage>));
     let mut last_endpoint_id: Option<String> = None;
     let mut last_endpoint_name: Option<String> = None;
-    // 流式响应的 Token 使用量在请求返回前无法完整获取，后续可扩展为在流结束时异步记录
-    let last_token_usage: Option<TokenUsage> = None;
 
     let mut ctx = RetryContext::new(state.get_ref(), path)?;
     let mut result: Option<Result<HttpResponse, AppError>> = None;
@@ -571,7 +573,7 @@ pub async fn forward_stream_request(
         let actual_path = path.strip_prefix(&ctx.exposed_api.prefix).unwrap_or(path);
         let target_path = crate::converter::convert_path(actual_path, &ctx.exposed_api.api_type, &endpoint.config.api_type);
         let target_url = build_target_url(&endpoint.config.url, &target_path);
-        
+
         let mapped_body = match map_model_name(&body, &endpoint, &ctx.pool, state.get_ref()).await {
             Ok(b) => b,
             Err(e) => {
@@ -685,7 +687,7 @@ pub async fn forward_stream_request(
             continue;
         }
 
-        // 无错误，记录首字节延迟，将第一个 chunk 和剩余 stream 合并后转发给客户端
+        // 无错误，记录首字节延迟
         let duration_ms = req_start.elapsed().as_millis() as u64;
         state.record_latency(&endpoint_id, duration_ms);
         let ep_id = endpoint.config.id.clone();
@@ -708,131 +710,158 @@ pub async fn forward_stream_request(
             }
         }
 
-        let body_stream = if need_convert {
-            // 需要格式转换
+        // 构建原始流（不含调用日志写入）
+        let raw_stream: Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send> = if need_convert {
             let mut converter = crate::converter::StreamConverter::new(ep_api_type.clone(), client_api_type);
-            response_builder
-                .content_type("text/event-stream")
-                .insert_header(("Cache-Control", "no-cache"))
-                .insert_header(("Connection", "keep-alive"))
-                .streaming({
-                    let mut buffer = String::new();
-                    let mut output_buffer = Vec::new();
-                    full_stream.map(move |chunk| {
-                        let chunk = chunk.map_err(std::io::Error::other);
-                        if let Ok(data) = &chunk {
-                            if let Ok(text) = std::str::from_utf8(data) {
-                                buffer.push_str(text);
-                                while let Some(line_end) = buffer.find('\n') {
-                                    let line = buffer[..line_end].trim().to_string();
-                                    buffer = buffer[line_end + 1..].to_string();
-                                    if line.is_empty() { continue; }
-                                    // token 统计（从原始格式解析）
-                                    if line.starts_with("data: ") && !line.contains("[DONE]") {
-                                        let json_str = &line[6..];
-                                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
-                                            if json.get("usage").is_some() {
-                                                let tokens = parse_token_usage(json_str.as_bytes(), &ep_api_type);
-                                                if tokens > 0 {
-                                                    state_clone.update_endpoint_tokens(&ep_id, tokens);
-                                                }
-                                            }
+            let tracker = usage_tracker.clone();
+            let mut buffer = String::new();
+            let mut output_buffer = Vec::new();
+            Box::new(full_stream.map(move |chunk| {
+                let chunk = chunk.map_err(std::io::Error::other);
+                if let Ok(data) = &chunk {
+                    if let Ok(text) = std::str::from_utf8(data) {
+                        buffer.push_str(text);
+                        while let Some(line_end) = buffer.find('\n') {
+                            let line = buffer[..line_end].trim().to_string();
+                            buffer = buffer[line_end + 1..].to_string();
+                            if line.is_empty() { continue; }
+                            if line.starts_with("data: ") && !line.contains("[DONE]") {
+                                let json_str = &line[6..];
+                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
+                                    if json.get("usage").is_some() {
+                                        let tokens = parse_token_usage(json_str.as_bytes(), &ep_api_type);
+                                        if tokens > 0 {
+                                            state_clone.update_endpoint_tokens(&ep_id, tokens);
                                         }
-                                    }
-                                    // 格式转换
-                                    let converted_lines = converter.convert_chunk(&line);
-                                    for converted in converted_lines {
-                                        output_buffer.push(converted);
+                                        let detail = parse_token_usage_detail(json_str.as_bytes(), &ep_api_type);
+                                        if let Ok(mut t) = tracker.lock() {
+                                            *t = Some(detail);
+                                        }
                                     }
                                 }
                             }
+                            let converted_lines = converter.convert_chunk(&line);
+                            for converted in converted_lines {
+                                output_buffer.push(converted);
+                            }
                         }
-                        // 返回转换后的数据
                         if output_buffer.is_empty() {
-                            Ok::<_, std::io::Error>(bytes::Bytes::new())
+                            return Ok(bytes::Bytes::new());
                         } else {
                             let output: String = output_buffer.drain(..).collect();
-                            Ok(bytes::Bytes::from(output))
+                            return Ok(bytes::Bytes::from(output));
                         }
-                    })
-                })
+                    }
+                }
+                Ok(bytes::Bytes::new())
+            }))
         } else {
-            // 同格式，直接转发
-            response_builder
-                .content_type("text/event-stream")
-                .insert_header(("Cache-Control", "no-cache"))
-                .insert_header(("Connection", "keep-alive"))
-                .streaming({
-                    let mut buffer = String::new();
-                    full_stream.map(move |chunk| {
-                        let chunk = chunk.map_err(std::io::Error::other);
-                        if let Ok(data) = &chunk {
-                            if let Ok(text) = std::str::from_utf8(data) {
-                                buffer.push_str(text);
-                                while let Some(line_end) = buffer.find('\n') {
-                                    let line = buffer[..line_end].trim().to_string();
-                                    buffer = buffer[line_end + 1..].to_string();
-                                    if line.starts_with("data: ") && !line.contains("[DONE]") {
-                                        let json_str = &line[6..];
-                                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
-                                            if json.get("usage").is_some() {
-                                                let tokens = parse_token_usage(json_str.as_bytes(), &ep_api_type);
-                                                if tokens > 0 {
-                                                    state_clone.update_endpoint_tokens(&ep_id, tokens);
-                                                }
-                                            }
+            let tracker = usage_tracker.clone();
+            let mut buffer = String::new();
+            Box::new(full_stream.map(move |chunk| {
+                let chunk = chunk.map_err(std::io::Error::other);
+                if let Ok(data) = &chunk {
+                    if let Ok(text) = std::str::from_utf8(data) {
+                        buffer.push_str(text);
+                        while let Some(line_end) = buffer.find('\n') {
+                            let line = buffer[..line_end].trim().to_string();
+                            buffer = buffer[line_end + 1..].to_string();
+                            if line.starts_with("data: ") && !line.contains("[DONE]") {
+                                let json_str = &line[6..];
+                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
+                                    if json.get("usage").is_some() {
+                                        let tokens = parse_token_usage(json_str.as_bytes(), &ep_api_type);
+                                        if tokens > 0 {
+                                            state_clone.update_endpoint_tokens(&ep_id, tokens);
+                                        }
+                                        let detail = parse_token_usage_detail(json_str.as_bytes(), &ep_api_type);
+                                        if let Ok(mut t) = tracker.lock() {
+                                            *t = Some(detail);
                                         }
                                     }
                                 }
                             }
                         }
-                        chunk
-                    })
-                })
+                    }
+                }
+                chunk
+            }))
         };
+
+        // 构建调用日志所需上下文
+        let log_client_ip = client_ip.clone();
+        let log_method = method.clone();
+        let log_path = path.to_string();
+        let log_api_prefix = api_prefix.clone();
+        let log_endpoint_id = last_endpoint_id.clone();
+        let log_endpoint_name = last_endpoint_name.clone();
+        let log_start = start;
+        let state_for_log = state.clone();
+        let tracker_for_log = usage_tracker.clone();
+
+        // 包裹流，在流结束后写入调用日志（含 token 用量）
+        let wrapped_stream = StreamLogWriter {
+            inner: raw_stream,
+            on_complete: Some(Box::new(move || {
+                let usage = tracker_for_log.lock().unwrap().take();
+                state_for_log.add_call_log(ApiCallLog {
+                    timestamp: Utc::now(),
+                    client_ip: log_client_ip,
+                    method: log_method,
+                    path: log_path,
+                    api_prefix: log_api_prefix,
+                    endpoint_id: log_endpoint_id,
+                    endpoint_name: log_endpoint_name,
+                    status_code: 200,
+                    status: "success".to_string(),
+                    error_message: None,
+                    duration_ms: log_start.elapsed().as_millis() as u64,
+                    input_tokens: usage.as_ref().and_then(|u| u.input),
+                    output_tokens: usage.as_ref().and_then(|u| u.output),
+                    total_tokens: usage.as_ref().and_then(|u| u.total),
+                });
+            })),
+        };
+
+        let body_stream = response_builder
+            .content_type("text/event-stream")
+            .insert_header(("Cache-Control", "no-cache"))
+            .insert_header(("Connection", "keep-alive"))
+            .streaming(wrapped_stream);
 
         result = Some(Ok(body_stream));
         break;
     }
 
-    // 保留最后一个端点直接返回的错误，用于调用日志展示
-    let last_raw_error = ctx.last_raw_error.clone();
-    let result = result.unwrap_or_else(|| Err(ctx.into_final_error()));
-
-    // 只记录命中对外 API 前缀的请求，过滤扫描器流量
-    if api_prefix.is_some() {
-        let (status_code, status, error_message) = match &result {
-            Ok(resp) => (resp.status().as_u16(), "success".to_string(), None),
-            Err(e) => {
-                // 优先显示端点直接返回的报错，而非对外接口包装后的统一错误
-                let err_msg = last_raw_error
-                    .clone()
-                    .unwrap_or_else(|| e.to_string());
-                (e.status_code(), "error".to_string(), Some(err_msg))
+    // 错误路径：请求未达到流式响应阶段，直接写入调用日志（无 token 数据）
+    // 成功路径：返回流式响应，调用日志已在流结束回调中写入
+    match result {
+        Some(Ok(body_stream)) => Ok(body_stream),
+        Some(Err(e)) => {
+            let last_raw_error = ctx.last_raw_error.clone();
+            let err_msg = last_raw_error.unwrap_or_else(|| e.to_string());
+            if api_prefix.is_some() {
+                state.add_call_log(ApiCallLog {
+                    timestamp: Utc::now(),
+                    client_ip,
+                    method,
+                    path: path.to_string(),
+                    api_prefix,
+                    endpoint_id: last_endpoint_id,
+                    endpoint_name: last_endpoint_name,
+                    status_code: e.status_code(),
+                    status: "error".to_string(),
+                    error_message: Some(err_msg),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                    input_tokens: None,
+                    output_tokens: None,
+                    total_tokens: None,
+                });
             }
-        };
-        let (input_tokens, output_tokens, total_tokens) = last_token_usage
-            .map(|u| (u.input, u.output, u.total))
-            .unwrap_or((None, None, None));
-        state.add_call_log(ApiCallLog {
-            timestamp: Utc::now(),
-            client_ip,
-            method,
-            path: path.to_string(),
-            api_prefix,
-            endpoint_id: last_endpoint_id,
-            endpoint_name: last_endpoint_name,
-            status_code,
-            status,
-            error_message,
-            duration_ms: start.elapsed().as_millis() as u64,
-            input_tokens,
-            output_tokens,
-            total_tokens,
-        });
+            Err(e)
+        }
+        None => Err(AppError::Internal("所有端点不可用，且无错误信息".to_string())),
     }
-
-    result
 }
 
 /// 转发请求到指定端点（非流式）
@@ -992,6 +1021,27 @@ fn parse_token_usage_detail(body: &[u8], api_type: &ApiType) -> TokenUsage {
 /// 解析响应中的token使用量（兼容旧接口，返回总数）
 fn parse_token_usage(body: &[u8], api_type: &ApiType) -> u64 {
     parse_token_usage_detail(body, api_type).total.unwrap_or(0)
+}
+
+/// 流式响应的 Stream 包装器，在流结束后写入调用日志（含 token 用量）
+struct StreamLogWriter {
+    inner: Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>,
+    on_complete: Option<Box<dyn FnOnce() + Send>>,
+}
+
+impl Stream for StreamLogWriter {
+    type Item = Result<Bytes, std::io::Error>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        let poll = this.inner.as_mut().poll_next(cx);
+        if matches!(&poll, Poll::Ready(None)) {
+            if let Some(cb) = this.on_complete.take() {
+                (cb)();
+            }
+        }
+        poll
+    }
 }
 
 #[cfg(test)]
