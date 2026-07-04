@@ -166,6 +166,13 @@ impl AppState {
 
     /// 添加端点
     pub async fn add_endpoint(&self, req: EndpointRequest) -> anyhow::Result<EndpointState> {
+        // 检查名称是否重复
+        {
+            let config = self.config.read();
+            if config.endpoints.iter().any(|e| e.name == req.name) {
+                anyhow::bail!("端点名称已存在: {}", req.name);
+            }
+        }
         let id = uuid::Uuid::new_v4().to_string();
         let config = EndpointConfig {
             id: id.clone(),
@@ -203,6 +210,13 @@ impl AppState {
 
     /// 更新端点
     pub async fn update_endpoint(&self, id: &str, req: EndpointRequest) -> anyhow::Result<EndpointState> {
+        // 检查名称是否与其他端点重复
+        {
+            let config = self.config.read();
+            if config.endpoints.iter().any(|e| e.id != id && e.name == req.name) {
+                anyhow::bail!("端点名称已存在: {}", req.name);
+            }
+        }
         let state = {
             let mut endpoints = self.endpoints.write();
             let ep = endpoints.get_mut(id).ok_or_else(|| anyhow::anyhow!("端点不存在: {}", id))?;
@@ -329,6 +343,13 @@ impl AppState {
 
     /// 添加池
     pub async fn add_pool(&self, req: PoolRequest) -> anyhow::Result<Pool> {
+        // 检查名称是否重复
+        {
+            let config = self.config.read();
+            if config.pools.iter().any(|p| p.name == req.name) {
+                anyhow::bail!("池名称已存在: {}", req.name);
+            }
+        }
         let id = uuid::Uuid::new_v4().to_string();
         let pool = Pool {
             id: id.clone(),
@@ -355,6 +376,13 @@ impl AppState {
 
     /// 更新池
     pub async fn update_pool(&self, id: &str, req: PoolRequest) -> anyhow::Result<Pool> {
+        // 检查名称是否与其他池重复
+        {
+            let config = self.config.read();
+            if config.pools.iter().any(|p| p.id != id && p.name == req.name) {
+                anyhow::bail!("池名称已存在: {}", req.name);
+            }
+        }
         let config_to_save = {
             let mut config = self.config.write();
             let pool = config.pools.iter_mut().find(|p| p.id == id)
@@ -421,6 +449,13 @@ impl AppState {
 
     /// 添加对外API
     pub async fn add_exposed_api(&self, req: ExposedApiRequest) -> anyhow::Result<ExposedApi> {
+        // 检查名称是否重复
+        {
+            let config = self.config.read();
+            if config.exposed_apis.iter().any(|a| a.name == req.name) {
+                anyhow::bail!("对外API名称已存在: {}", req.name);
+            }
+        }
         let id = uuid::Uuid::new_v4().to_string();
         let api = ExposedApi {
             id: id.clone(),
@@ -446,6 +481,13 @@ impl AppState {
 
     /// 更新对外API
     pub async fn update_exposed_api(&self, id: &str, req: ExposedApiRequest) -> anyhow::Result<ExposedApi> {
+        // 检查名称是否与其他对外API重复
+        {
+            let config = self.config.read();
+            if config.exposed_apis.iter().any(|a| a.id != id && a.name == req.name) {
+                anyhow::bail!("对外API名称已存在: {}", req.name);
+            }
+        }
         let config_to_save = {
             let mut config = self.config.write();
             let api = config.exposed_apis.iter_mut().find(|a| a.id == id)

@@ -365,6 +365,7 @@ function initEventListeners() {
         document.getElementById('api-form').reset();
         document.getElementById('api-id').value = '';
         document.getElementById('api-enabled').checked = true;
+        document.getElementById('api-name-warning').style.display = 'none';
         // 清空完整 URL 显示
         const apiFullUrlDiv = document.getElementById('api-full-url');
         if (apiFullUrlDiv) {
@@ -401,11 +402,35 @@ function initEventListeners() {
         document.getElementById('pool-modal-title').textContent = '添加端点池';
         document.getElementById('pool-form').reset();
         document.getElementById('pool-id').value = '';
+        document.getElementById('pool-name-warning').style.display = 'none';
         showModal('pool-modal');
     });
 
     // 池表单
     document.getElementById('pool-form').addEventListener('submit', handleSavePool);
+
+    // 名称重复即时校验
+    const epNameInput = document.getElementById('ep-name');
+    if (epNameInput) {
+        epNameInput.addEventListener('input', () => {
+            const id = document.getElementById('ep-id').value;
+            checkDuplicateName(epNameInput.value, currentEndpoints, id, 'ep-name-warning');
+        });
+    }
+    const poolNameInput = document.getElementById('pool-name');
+    if (poolNameInput) {
+        poolNameInput.addEventListener('input', () => {
+            const id = document.getElementById('pool-id').value;
+            checkDuplicateName(poolNameInput.value, currentPools, id, 'pool-name-warning');
+        });
+    }
+    const apiNameInput = document.getElementById('api-name');
+    if (apiNameInput) {
+        apiNameInput.addEventListener('input', () => {
+            const id = document.getElementById('api-id').value;
+            checkDuplicateName(apiNameInput.value, currentApis, id, 'api-name-warning');
+        });
+    }
 
     // 池调度算法切换说明
     const poolAlgoSelect = document.getElementById('pool-algorithm');
@@ -932,6 +957,7 @@ function addEndpointToPool(poolId) {
     document.getElementById('endpoint-form').reset();
     document.getElementById('ep-id').value = '';
     document.getElementById('ep-enabled').checked = true;
+    document.getElementById('ep-name-warning').style.display = 'none';
     
     // 清空完整路径显示
     const fullUrlDiv = document.getElementById('ep-full-url');
@@ -3437,6 +3463,25 @@ function updateRetryModeDescription() {
     if (countGroup) {
         countGroup.style.display = selectedMode === 'none' ? 'none' : 'block';
     }
+}
+
+// 检查名称是否重复（前端即时校验，排除当前编辑的实体）
+function checkDuplicateName(name, items, currentId, warningId) {
+    const warning = document.getElementById(warningId);
+    if (!warning) return true;
+    if (!name || !name.trim()) {
+        warning.style.display = 'none';
+        return true;
+    }
+    const trimmed = name.trim();
+    const isDuplicate = items.some(item => item.id !== currentId && item.name === trimmed);
+    if (isDuplicate) {
+        warning.textContent = `名称"${trimmed}"已存在，请使用其他名称`;
+        warning.style.display = 'block';
+    } else {
+        warning.style.display = 'none';
+    }
+    return !isDuplicate;
 }
 
 // 消息提示
