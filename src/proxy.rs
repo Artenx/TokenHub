@@ -711,12 +711,12 @@ pub async fn forward_stream_request(
         }
 
         // 构建原始流（不含调用日志写入）
-        let raw_stream: Box<dyn Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send> = if need_convert {
+        let raw_stream: Pin<Box<dyn Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send>> = if need_convert {
             let mut converter = crate::converter::StreamConverter::new(ep_api_type.clone(), client_api_type);
             let tracker = usage_tracker.clone();
             let mut buffer = String::new();
             let mut output_buffer = Vec::new();
-            Box::new(full_stream.map(move |chunk| {
+            Box::pin(full_stream.map(move |chunk| {
                 let chunk = chunk.map_err(std::io::Error::other);
                 if let Ok(data) = &chunk {
                     if let Ok(text) = std::str::from_utf8(data) {
@@ -758,7 +758,7 @@ pub async fn forward_stream_request(
         } else {
             let tracker = usage_tracker.clone();
             let mut buffer = String::new();
-            Box::new(full_stream.map(move |chunk| {
+            Box::pin(full_stream.map(move |chunk| {
                 let chunk = chunk.map_err(std::io::Error::other);
                 if let Ok(data) = &chunk {
                     if let Ok(text) = std::str::from_utf8(data) {
@@ -1031,6 +1031,18 @@ struct StreamLogWriter {
 
 impl Stream for StreamLogWriter {
     type Item = Result<bytes::Bytes, std::io::Error>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        let poll = this.inner.as_mut().poll_next(cx);
+        if matches!(&poll, Poll::Ready(None)) {
+            if let Some(cb) = this.on_complete.take() {
+                (cb)();
+            }
+        }
+        poll
+    }
+}
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
