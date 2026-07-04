@@ -615,7 +615,6 @@ impl StreamConverter {
             (ApiType::OpenAIResponses, ApiType::Anthropic) => self.responses_to_anthropic_chunk(&json),
             (ApiType::Anthropic, ApiType::OpenAI) => self.anthropic_to_openai_chunk(&json),
             (ApiType::Anthropic, ApiType::OpenAIResponses) => self.anthropic_to_responses_chunk(&json),
-            _ => Some(json),
             _ => vec![format!("data: {}", json_str)],
         }
     }
