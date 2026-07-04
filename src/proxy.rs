@@ -456,13 +456,22 @@ pub async fn forward_request(
         }
     }
 
+    // 保留最后一个端点直接返回的错误，用于调用日志展示
+    let last_endpoint_error = ctx.last_error.clone();
     let result = result.unwrap_or_else(|| Err(ctx.into_final_error()));
 
     // 只记录命中对外 API 前缀的请求，过滤扫描器流量
     if api_prefix.is_some() {
         let (status_code, status, error_message) = match &result {
             Ok(resp) => (resp.status().as_u16(), "success".to_string(), None),
-            Err(e) => (e.status_code(), "error".to_string(), Some(e.to_string())),
+            Err(e) => {
+                // 优先显示端点直接返回的报错，而非对外接口包装后的统一错误
+                let err_msg = last_endpoint_error
+                    .as_ref()
+                    .map(|le| le.to_string())
+                    .unwrap_or_else(|| e.to_string());
+                (e.status_code(), "error".to_string(), Some(err_msg))
+            }
         };
         state.add_call_log(ApiCallLog {
             timestamp: Utc::now(),
@@ -757,13 +766,22 @@ pub async fn forward_stream_request(
         break;
     }
 
+    // 保留最后一个端点直接返回的错误，用于调用日志展示
+    let last_endpoint_error = ctx.last_error.clone();
     let result = result.unwrap_or_else(|| Err(ctx.into_final_error()));
 
     // 只记录命中对外 API 前缀的请求，过滤扫描器流量
     if api_prefix.is_some() {
         let (status_code, status, error_message) = match &result {
             Ok(resp) => (resp.status().as_u16(), "success".to_string(), None),
-            Err(e) => (e.status_code(), "error".to_string(), Some(e.to_string())),
+            Err(e) => {
+                // 优先显示端点直接返回的报错，而非对外接口包装后的统一错误
+                let err_msg = last_endpoint_error
+                    .as_ref()
+                    .map(|le| le.to_string())
+                    .unwrap_or_else(|| e.to_string());
+                (e.status_code(), "error".to_string(), Some(err_msg))
+            }
         };
         state.add_call_log(ApiCallLog {
             timestamp: Utc::now(),
