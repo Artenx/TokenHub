@@ -709,10 +709,12 @@ pub async fn test_pool_endpoints(
     let endpoint_ids = state.endpoint_ids_in_pool(&pool_id);
     let client = &state.http_client;
     let pool = state.get_pool(&pool_id);
+    let pool_name = pool.as_ref().map(|p| p.name.clone()).unwrap_or_else(|| "未命名池".to_string());
 
     let mut results: Vec<EndpointTestResult> = Vec::new();
 
     for ep_id in &endpoint_ids {
+        let start = std::time::Instant::now();
         let ep_state = match state.get_endpoint(ep_id) {
             Some(ep) => ep,
             None => continue,
@@ -797,8 +799,8 @@ pub async fn test_pool_endpoints(
             }
         };
 
-        // 发送测试请求
-        match request_builder
+        // 发送测试请求并收集结果
+        let result: EndpointTestResult = match request_builder
             .timeout(std::time::Duration::from_secs(10))
             .body(chat_body.to_string())
             .send()
@@ -820,39 +822,58 @@ pub async fn test_pool_endpoints(
                         "响应解析失败".to_string()
                     };
 
-                    results.push(EndpointTestResult {
+                    EndpointTestResult {
                         endpoint_id: ep_id.clone(),
                         endpoint_name: ep_cfg.name.clone(),
                         success: true,
                         message: reply,
-                        model_used: model_name,
+                        model_used: model_name.clone(),
                         status: status.as_u16(),
-                        tested_url: chat_url,
-                    });
+                        tested_url: chat_url.clone(),
+                    }
                 } else {
-                    results.push(EndpointTestResult {
+                    EndpointTestResult {
                         endpoint_id: ep_id.clone(),
                         endpoint_name: ep_cfg.name.clone(),
                         success: false,
                         message: format!("请求失败 (HTTP {}): {}", status, &response_text.chars().take(200).collect::<String>()),
-                        model_used: model_name,
+                        model_used: model_name.clone(),
                         status: status.as_u16(),
-                        tested_url: chat_url,
-                    });
+                        tested_url: chat_url.clone(),
+                    }
                 }
             }
             Err(e) => {
-                results.push(EndpointTestResult {
+                EndpointTestResult {
                     endpoint_id: ep_id.clone(),
                     endpoint_name: ep_cfg.name.clone(),
                     success: false,
                     message: format!("连接失败: {}", e),
-                    model_used: model_name,
+                    model_used: model_name.clone(),
                     status: 0,
-                    tested_url: chat_url,
-                });
+                    tested_url: chat_url.clone(),
+                }
             }
-        }
+        };
+
+        // 记录调用日志
+        let log_status = if result.success { "success" } else { "error" };
+        let error_msg = if result.success { None } else { Some(result.message.clone()) };
+        state.add_call_log(crate::models::ApiCallLog {
+            timestamp: chrono::Utc::now(),
+            client_ip: "admin".to_string(),
+            method: "POST".to_string(),
+            path: result.tested_url.clone(),
+            api_prefix: Some(format!("[一键测试] {}", pool_name)),
+            endpoint_id: Some(result.endpoint_id.clone()),
+            endpoint_name: Some(result.endpoint_name.clone()),
+            status_code: result.status,
+            status: log_status.to_string(),
+            error_message: error_msg,
+            duration_ms: start.elapsed().as_millis() as u64,
+        });
+
+        results.push(result);
     }
 
     let summary = PoolTestSummary {
