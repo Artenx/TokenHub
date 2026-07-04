@@ -845,23 +845,64 @@ function renderEndpointsList() {
     }).join('');
 }
 
-// 端点卡片快速对话测试
+// 端点卡片对话测试 - 先获取模型列表让用户选择
 async function quickTestEndpoint(id, name) {
-    showToast(`正在测试 ${escapeHtml(name)}...`, 'info');
+    const modelsList = document.getElementById('models-list');
+    const modelsModalTitle = document.getElementById('models-modal-title');
+    const modelsModalFooter = document.getElementById('models-modal-footer');
+
+    if (modelsList) {
+        modelsList.innerHTML = '<p style="color: var(--text-secondary); padding: 16px; text-align: center;">加载模型列表...</p>';
+    }
+    if (modelsModalFooter) {
+        modelsModalFooter.style.display = 'none';
+    }
+    if (modelsModalTitle) {
+        modelsModalTitle.textContent = `选择测试模型 - ${escapeHtml(name)}`;
+    }
+    showModal('models-modal');
+
     try {
-        const res = await fetch(`${API_BASE}/endpoints/${encodeURIComponent(id)}/test`, {
+        // 获取端点完整配置
+        const epRes = await fetch(`${API_BASE}/endpoints/${encodeURIComponent(id)}`);
+        if (!epRes.ok) {
+            throw new Error('获取端点信息失败');
+        }
+        const fullEp = await epRes.json();
+        const config = fullEp.config;
+
+        // 获取模型列表
+        const data = {
+            name: config.name,
+            url: config.url,
+            api_type: config.api_type,
+            api_key: config.api_key,
+            token_limit: 1000,
+            reset_policy: 'manual',
+            enabled: true
+        };
+
+        const res = await fetch(`${API_BASE}/endpoints/models`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({})
+            body: JSON.stringify(data)
         });
         const result = await res.json();
-        if (result.success) {
-            showToast(`${escapeHtml(name)} 测试成功: ${escapeHtml(result.message)}`, 'success');
+
+        if (result.success && result.models && result.models.length > 0) {
+            renderModelSelectionList(result.models, data);
+            if (modelsModalFooter) {
+                modelsModalFooter.style.display = 'block';
+            }
         } else {
-            showToast(`${escapeHtml(name)} 测试失败: ${escapeHtml(result.message)}`, 'error');
+            if (modelsList) {
+                modelsList.innerHTML = `<p style="color: var(--danger); padding: 16px; text-align: center;">获取模型列表失败: ${escapeHtml(result.message || '未知错误')}</p>`;
+            }
         }
     } catch (e) {
-        showToast(`测试请求失败: ${e.message}`, 'error');
+        if (modelsList) {
+            modelsList.innerHTML = `<p style="color: var(--danger); padding: 16px; text-align: center;">请求失败: ${escapeHtml(e.message)}</p>`;
+        }
     }
 }
 
