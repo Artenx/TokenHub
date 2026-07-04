@@ -1025,12 +1025,12 @@ fn parse_token_usage(body: &[u8], api_type: &ApiType) -> u64 {
 
 /// 流式响应的 Stream 包装器，在流结束后写入调用日志（含 token 用量）
 struct StreamLogWriter {
-    inner: Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>,
+    inner: Pin<Box<dyn Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send>>,
     on_complete: Option<Box<dyn FnOnce() + Send>>,
 }
 
 impl Stream for StreamLogWriter {
-    type Item = Result<Bytes, std::io::Error>;
+    type Item = Result<bytes::Bytes, std::io::Error>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
