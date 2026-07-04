@@ -356,7 +356,7 @@ fn build_upstream_request(
 
     // 设置认证头
     match endpoint.config.api_type {
-        ApiType::OpenAI | ApiType::OpenAIResponses => {
+        ApiType::OpenAI | ApiType::OpenAIResponses | ApiType::Custom => {
             builder = builder.header("Authorization", format!("Bearer {}", endpoint.config.api_key));
         }
         ApiType::Anthropic => {
@@ -572,7 +572,11 @@ pub async fn forward_stream_request(
 
         let actual_path = path.strip_prefix(&ctx.exposed_api.prefix).unwrap_or(path);
         let target_path = crate::converter::convert_path(actual_path, &ctx.exposed_api.api_type, &endpoint.config.api_type);
-        let target_url = build_target_url(&endpoint.config.url, &target_path);
+        let target_url = if endpoint.config.api_type == crate::models::ApiType::Custom {
+            endpoint.config.url.clone()
+        } else {
+            build_target_url(&endpoint.config.url, &target_path)
+        };
 
         let mapped_body = match map_model_name(&body, &endpoint, &ctx.pool, state.get_ref()).await {
             Ok(b) => b,
@@ -874,7 +878,11 @@ async fn forward_to_endpoint(
     client_api_type: &ApiType,
 ) -> Result<(HttpResponse, TokenUsage), EndpointCallError> {
     let target_path = crate::converter::convert_path(path, client_api_type, &endpoint.config.api_type);
-    let target_url = build_target_url(&endpoint.config.url, &target_path);
+    let target_url = if endpoint.config.api_type == crate::models::ApiType::Custom {
+        endpoint.config.url.clone()
+    } else {
+        build_target_url(&endpoint.config.url, &target_path)
+    };
     debug!("转发到: {} (客户端格式: {:?}, 端点格式: {:?})", target_url, client_api_type, endpoint.config.api_type);
 
     // 转换请求体
@@ -988,7 +996,7 @@ fn parse_token_usage_detail(body: &[u8], api_type: &ApiType) -> TokenUsage {
     };
 
     match api_type {
-        ApiType::OpenAI | ApiType::OpenAIResponses => {
+        ApiType::OpenAI | ApiType::OpenAIResponses | ApiType::Custom => {
             let usage = json.get("usage");
             let input = usage
                 .and_then(|u| u.get("prompt_tokens"))

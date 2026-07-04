@@ -236,17 +236,22 @@ pub async fn list_models(
     let base_url = ep.url.trim_end_matches('/');
 
     // 根据接口类型构建认证头
-    let models_url = if base_url.ends_with("/v1") || base_url.ends_with("/v1/") {
-        format!("{}/models", base_url)
-    } else {
-        format!("{}/v1/models", base_url)
+    let models_url = match ep.api_type {
+        crate::models::ApiType::Custom => base_url.to_string(),
+        _ => {
+            if base_url.ends_with("/v1") || base_url.ends_with("/v1/") {
+                format!("{}/models", base_url)
+            } else {
+                format!("{}/v1/models", base_url)
+            }
+        }
     };
 
     let mut request_builder = client.get(&models_url)
         .header("Content-Type", "application/json");
 
     match ep.api_type {
-        crate::models::ApiType::OpenAI | crate::models::ApiType::OpenAIResponses => {
+        crate::models::ApiType::OpenAI | crate::models::ApiType::OpenAIResponses | crate::models::ApiType::Custom => {
             request_builder = request_builder.header("Authorization", format!("Bearer {}", ep.api_key));
         }
         crate::models::ApiType::Anthropic => {
@@ -324,11 +329,24 @@ pub async fn check_endpoint(
         match ep.api_type {
             crate::models::ApiType::OpenAI | crate::models::ApiType::OpenAIResponses => "gpt-3.5-turbo".to_string(),
             crate::models::ApiType::Anthropic => "claude-3-haiku-20240307".to_string(),
+            crate::models::ApiType::Custom => "default".to_string(),
         }
     });
 
     // 根据接口类型构建测试 URL、请求体和认证头
     let (chat_url, chat_body, request_builder) = match ep.api_type {
+        crate::models::ApiType::Custom => {
+            let url = base_url.to_string();
+            let body = serde_json::json!({
+                "model": model_name,
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 10
+            });
+            let builder = client.post(&url)
+                .header("Authorization", format!("Bearer {}", ep.api_key))
+                .header("Content-Type", "application/json");
+            (url, body, builder)
+        }
         crate::models::ApiType::OpenAI => {
             let url = if base_url.ends_with("/v1") || base_url.ends_with("/v1/") {
                 format!("{}/chat/completions", base_url)
@@ -474,10 +492,23 @@ pub async fn test_endpoint_by_id(
         match ep_cfg.api_type {
             crate::models::ApiType::OpenAI | crate::models::ApiType::OpenAIResponses => "gpt-3.5-turbo".to_string(),
             crate::models::ApiType::Anthropic => "claude-3-haiku-20240307".to_string(),
+            crate::models::ApiType::Custom => "default".to_string(),
         }
     });
 
     let (chat_url, chat_body, request_builder) = match ep_cfg.api_type {
+        crate::models::ApiType::Custom => {
+            let url = base_url.to_string();
+            let body = serde_json::json!({
+                "model": model_name,
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 10
+            });
+            let builder = client.post(&url)
+                .header("Authorization", format!("Bearer {}", ep_cfg.api_key))
+                .header("Content-Type", "application/json");
+            (url, body, builder)
+        }
         crate::models::ApiType::OpenAI => {
             let url = if base_url.ends_with("/v1") || base_url.ends_with("/v1/") {
                 format!("{}/chat/completions", base_url)
@@ -747,6 +778,7 @@ pub async fn test_pool_endpoints(
                 match ep_cfg.api_type {
                     crate::models::ApiType::OpenAI | crate::models::ApiType::OpenAIResponses => "gpt-3.5-turbo".to_string(),
                     crate::models::ApiType::Anthropic => "claude-3-haiku-20240307".to_string(),
+                    crate::models::ApiType::Custom => "default".to_string(),
                 }
             })
         };
@@ -754,6 +786,18 @@ pub async fn test_pool_endpoints(
         // 构建测试请求
         let base_url = ep_cfg.url.trim_end_matches('/');
         let (chat_url, chat_body, request_builder) = match ep_cfg.api_type {
+            crate::models::ApiType::Custom => {
+                let url = base_url.to_string();
+                let body = serde_json::json!({
+                    "model": model_name,
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "max_tokens": 10
+                });
+                let builder = client.post(&url)
+                    .header("Authorization", format!("Bearer {}", ep_cfg.api_key))
+                    .header("Content-Type", "application/json");
+                (url, body, builder)
+            }
             crate::models::ApiType::OpenAI => {
                 let url = if base_url.ends_with("/v1") || base_url.ends_with("/v1/") {
                     format!("{}/chat/completions", base_url)

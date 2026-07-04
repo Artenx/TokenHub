@@ -116,14 +116,28 @@ function updateEndpointFullUrl() {
     const epUrl = document.getElementById('ep-url');
     const epType = document.getElementById('ep-type');
     const fullUrlDiv = document.getElementById('ep-full-url');
+    const urlHint = document.getElementById('ep-url-hint');
     
     if (!epUrl || !epType || !fullUrlDiv) return;
     
     const baseUrl = epUrl.value.trim();
     const apiType = epType.value;
     
+    // 更新提示文本
+    if (urlHint) {
+        urlHint.textContent = apiType === 'custom'
+            ? '输入完整的 API 请求 URL'
+            : '只需输入基础路径，我会自动补全完整路径';
+    }
+    
     if (!baseUrl) {
         fullUrlDiv.textContent = '';
+        return;
+    }
+    
+    // 自定义类型：直接显示输入的完整 URL，不做任何补全
+    if (apiType === 'custom') {
+        fullUrlDiv.textContent = '完整路径: ' + baseUrl;
         return;
     }
     

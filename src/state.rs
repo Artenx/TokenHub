@@ -1094,17 +1094,22 @@ impl AppState {
             .ok_or_else(|| anyhow::anyhow!("端点不存在: {}", endpoint_id))?;
 
         let base_url = endpoint.config.url.trim_end_matches('/');
-        let models_url = if base_url.ends_with("/v1") || base_url.ends_with("/v1/") {
-            format!("{}/models", base_url)
-        } else {
-            format!("{}/v1/models", base_url)
+        let models_url = match endpoint.config.api_type {
+            ApiType::Custom => base_url.to_string(),
+            _ => {
+                if base_url.ends_with("/v1") || base_url.ends_with("/v1/") {
+                    format!("{}/models", base_url)
+                } else {
+                    format!("{}/v1/models", base_url)
+                }
+            }
         };
 
         let mut request_builder = self.http_client.get(&models_url)
             .header("Content-Type", "application/json");
 
         match endpoint.config.api_type {
-            ApiType::OpenAI | ApiType::OpenAIResponses => {
+            ApiType::OpenAI | ApiType::OpenAIResponses | ApiType::Custom => {
                 request_builder = request_builder.header("Authorization", format!("Bearer {}", endpoint.config.api_key));
             }
             ApiType::Anthropic => {

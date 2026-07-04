@@ -9,6 +9,7 @@ pub enum ApiType {
     Anthropic,
     #[serde(rename = "openai-responses")]
     OpenAIResponses,
+    Custom,
 }
 
 impl std::fmt::Display for ApiType {
@@ -17,6 +18,7 @@ impl std::fmt::Display for ApiType {
             ApiType::OpenAI => write!(f, "openai"),
             ApiType::Anthropic => write!(f, "anthropic"),
             ApiType::OpenAIResponses => write!(f, "openai-responses"),
+            ApiType::Custom => write!(f, "custom"),
         }
     }
 }

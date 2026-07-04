@@ -376,18 +376,19 @@
                         <span id="ep-name-warning" style="display: none; color: #f44336; font-size: 0.75rem;"></span>
                     </div>
                     <div class="form-group">
-                        <label>Base URL</label>
-                        <input type="text" id="ep-url" placeholder="https://api.openai.com" required>
-                        <small>只需输入基础路径，我会自动补全完整路径</small>
-                    </div>
-                    <div class="form-group">
                         <label>接口类型</label>
                         <select id="ep-type">
-                            <option value="openai">OpenAI</option>
+                            <option value="openai">OpenAI Chat</option>
                             <option value="anthropic">Anthropic</option>
                             <option value="openai-responses">OpenAI Responses</option>
+                            <option value="custom">自定义</option>
                         </select>
                         <small>选择类型后自动配置 API 路径和认证方式</small>
+                    </div>
+                    <div class="form-group">
+                        <label>Base URL</label>
+                        <input type="text" id="ep-url" placeholder="https://api.openai.com" required>
+                        <small id="ep-url-hint">只需输入基础路径，我会自动补全完整路径</small>
                         <div id="ep-full-url" style="margin-top: 8px; padding: 8px 12px; background: var(--bg-secondary); border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 0.8125rem; color: var(--accent); word-break: break-all;"></div>
                     </div>
                     <div class="form-group">

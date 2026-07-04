@@ -479,6 +479,7 @@ pub fn convert_request(body: &Value, from: &crate::models::ApiType, to: &crate::
         ApiType::OpenAI => parse_openai(body),
         ApiType::OpenAIResponses => parse_openai_responses(body),
         ApiType::Anthropic => parse_anthropic(body),
+        ApiType::Custom => return body.clone(),
     };
 
     // 再转换为目标格式
@@ -486,6 +487,7 @@ pub fn convert_request(body: &Value, from: &crate::models::ApiType, to: &crate::
         ApiType::OpenAI => to_openai(&unified),
         ApiType::OpenAIResponses => to_openai_responses(&unified),
         ApiType::Anthropic => to_anthropic(&unified),
+        ApiType::Custom => to_openai(&unified),
     }
 }
 
@@ -502,6 +504,7 @@ pub fn convert_response(body: &Value, from: &crate::models::ApiType, to: &crate:
         ApiType::OpenAI => parse_openai_response(body),
         ApiType::OpenAIResponses => parse_openai_responses_response(body),
         ApiType::Anthropic => parse_anthropic_response(body),
+        ApiType::Custom => return body.clone(),
     };
 
     // 再转换为目标格式
@@ -509,6 +512,7 @@ pub fn convert_response(body: &Value, from: &crate::models::ApiType, to: &crate:
         ApiType::OpenAI => to_openai_response(&unified),
         ApiType::OpenAIResponses => to_openai_responses_response(&unified),
         ApiType::Anthropic => to_anthropic_response(&unified),
+        ApiType::Custom => to_openai_response(&unified),
     }
 }
 
@@ -532,6 +536,7 @@ pub fn convert_path(path: &str, from: &crate::models::ApiType, to: &crate::model
         ApiType::OpenAI => "chat/completions".to_string(),
         ApiType::OpenAIResponses => "responses".to_string(),
         ApiType::Anthropic => "messages".to_string(),
+        ApiType::Custom => path.to_string(),
     }
 }
 
@@ -610,6 +615,7 @@ impl StreamConverter {
             (ApiType::OpenAIResponses, ApiType::Anthropic) => self.responses_to_anthropic_chunk(&json),
             (ApiType::Anthropic, ApiType::OpenAI) => self.anthropic_to_openai_chunk(&json),
             (ApiType::Anthropic, ApiType::OpenAIResponses) => self.anthropic_to_responses_chunk(&json),
+            _ => Some(json),
             _ => vec![format!("data: {}", json_str)],
         }
     }
@@ -843,7 +849,7 @@ impl StreamConverter {
 
         match &self.to {
             ApiType::OpenAI => vec!["data: [DONE]\n".to_string()],
-            ApiType::OpenAIResponses | ApiType::Anthropic => vec![],
+            ApiType::OpenAIResponses | ApiType::Anthropic | ApiType::Custom => vec![],
         }
     }
 }
