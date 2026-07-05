@@ -569,6 +569,7 @@ impl AppState {
             .filter(|ep| ep.config.token_limit > 0 && ep.config.token_limit < 999999999000)
             .collect();
         let total_tokens_used: u64 = limited_endpoints.iter().map(|ep| ep.tokens_used).sum();
+        let total_tokens_consumed: u64 = endpoints.values().map(|ep| ep.total_tokens_used).sum();
         let total_tokens_limit: u64 = limited_endpoints.iter().map(|ep| ep.config.token_limit).sum();
         let total_requests: u64 = endpoints.values().map(|ep| ep.total_requests).sum();
 
@@ -580,6 +581,7 @@ impl AppState {
                 url: ep.config.url.clone(),
                 api_type: ep.config.api_type.clone(),
                 tokens_used: ep.tokens_used,
+                total_tokens_consumed: ep.total_tokens_used,
                 token_limit: ep.config.token_limit,
                 tokens_remaining: ep.tokens_remaining(),
                 enabled: ep.config.enabled,
@@ -645,6 +647,7 @@ impl AppState {
             total_endpoints: endpoints.len(),
             active_endpoints: active_count,
             total_tokens_used,
+            total_tokens_consumed,
             total_tokens_limit,
             total_requests,
             total_pools: config.pools.len(),
@@ -713,6 +716,9 @@ impl AppState {
                 if let Some(tokens) = state_data.get("tokens_used").and_then(|v| v.as_u64()) {
                     ep.tokens_used = tokens;
                 }
+                if let Some(tokens) = state_data.get("total_tokens_used").and_then(|v| v.as_u64()) {
+                    ep.total_tokens_used = tokens;
+                }
                 if let Some(reset_str) = state_data.get("last_reset").and_then(|v| v.as_str()) {
                     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(reset_str) {
                         ep.last_reset = dt.with_timezone(&chrono::Utc);
@@ -765,6 +771,7 @@ impl AppState {
             endpoints.iter().map(|(id, ep)| {
                 (id.clone(), serde_json::json!({
                     "tokens_used": ep.tokens_used,
+                    "total_tokens_used": ep.total_tokens_used,
                     "last_reset": ep.last_reset,
                     "request_last_reset": ep.request_last_reset,
                     "last_used": ep.last_used,

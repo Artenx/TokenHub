@@ -117,6 +117,8 @@ fn default_now() -> DateTime<Utc> {
 pub struct EndpointState {
     pub config: EndpointConfig,
     pub tokens_used: u64,
+    #[serde(default)]
+    pub total_tokens_used: u64,
     pub last_reset: DateTime<Utc>,
     /// 请求次数最后重置时间（用于每分钟等独立重置策略）
     #[serde(default = "default_now")]
@@ -140,6 +142,7 @@ impl EndpointState {
         Self {
             config,
             tokens_used: 0,
+            total_tokens_used: 0,
             last_reset: now,
             request_last_reset: now,
             last_used: None,
@@ -294,6 +297,7 @@ impl EndpointState {
 
     pub fn add_tokens(&mut self, amount: u64) {
         self.tokens_used = self.tokens_used.saturating_add(amount);
+        self.total_tokens_used = self.total_tokens_used.saturating_add(amount);
         self.last_used = Some(Utc::now());
 
         // Token 滑动窗口记录
@@ -502,6 +506,7 @@ pub struct StatsInfo {
     pub total_endpoints: usize,
     pub active_endpoints: usize,
     pub total_tokens_used: u64,
+    pub total_tokens_consumed: u64,
     pub total_tokens_limit: u64,
     pub total_requests: u64,
     pub total_pools: usize,
@@ -518,6 +523,7 @@ pub struct EndpointStats {
     pub url: String,
     pub api_type: ApiType,
     pub tokens_used: u64,
+    pub total_tokens_consumed: u64,
     pub token_limit: u64,
     pub tokens_remaining: u64,
     pub enabled: bool,

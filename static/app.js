@@ -584,6 +584,7 @@ async function loadDashboard() {
         document.getElementById('stat-total').textContent = stats.total_endpoints;
         document.getElementById('stat-active-sub').textContent = `活跃: ${stats.active_endpoints}`;
         document.getElementById('stat-used').textContent = formatNumber(stats.total_tokens_used);
+        document.getElementById('stat-total-consumed').textContent = formatNumber(stats.total_tokens_consumed);
         document.getElementById('stat-limit-sub').textContent = `限额: ${formatLimit(stats.total_tokens_limit)}`;
         document.getElementById('stat-usage-rate').textContent = `${usageRate}%`;
         document.getElementById('stat-usage-bar').style.width = `${usageBar}%`;
@@ -711,6 +712,10 @@ function renderEndpointsOverview() {
                     <div class="endpoint-detail">
                         <label>已用/限额</label>
                         <span>${formatNumber(ep.tokens_used)} / ${formatLimit(ep.token_limit)}</span>
+                    </div>
+                    <div class="endpoint-detail">
+                        <label>总消耗</label>
+                        <span>${formatNumber(ep.total_tokens_consumed)}</span>
                     </div>
                     <div class="endpoint-detail">
                         <label>请求次数限额</label>
