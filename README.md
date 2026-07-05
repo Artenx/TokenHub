@@ -8,8 +8,8 @@
 </p>
 
 <p align="center">
-  <strong>LLM API 接口池管理工具 — 多端点负载均衡、Token 限额管控</strong><br>
-  <em>LLM API Pool Manager — Multi-endpoint load balancing & token quota management</em>
+  <strong>LLM API 接口池管理工具 — 多端点负载均衡、Token 限额管控、IP 限流防扫描</strong><br>
+  <em>LLM API Pool Manager — Multi-endpoint load balancing, token quota & IP rate limiting</em>
 </p>
 
 <p align="center">
