@@ -1,24 +1,40 @@
 # TokenHub
 
-> LLM API Pool Manager — Multi-endpoint load balancing & token quota management
+<p align="center">
+  <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License">
+  <img src="https://img.shields.io/badge/Rust-1.75+-orange.svg" alt="Rust">
+  <img src="https://img.shields.io/badge/Docker-Supported-2496ED.svg?logo=docker" alt="Docker">
+  <img src="https://img.shields.io/badge/Status-Stable-brightgreen.svg" alt="Status">
+</p>
 
-[中文文档](./README.md)
+<p align="center">
+  <strong>LLM API Pool Manager — Multi-endpoint load balancing & token quota management</strong><br>
+  <em>LLM API 接口池管理工具 — 多端点负载均衡、Token 限额管控</em>
+</p>
+
+<p align="center">
+  <a href="./README.md">中文文档</a>
+</p>
+
+---
 
 ## Features
 
-- **Multi-endpoint pools** - Group endpoints into pools with passthrough or mapping model name modes
-- **Load balancing** - Round Robin, Failover, and Random algorithms with automatic retry on failure
-- **Token quota management** - Supports unlimited, manual reset, daily auto-reset, and 5-hour rolling window
-- **Request count limit** - Independent request cap per endpoint, supports manual/daily/5-hour rolling/per-minute reset
-- **Sliding window algorithm** - 5-hour rolling window, old consumption auto-expires, no manual reset needed
-- **Endpoint latency stats** - Collects per-endpoint latency, exposes P50/P90/P95 aggregates and a leaderboard
-- **IP rate limiting** - Rate-limits unrecognized requests by IP to mitigate scanner traffic
-- **Custom routing** - Configure external API prefixes with independent authentication keys
-- **Web dashboard** - Visual management of endpoints, pools, APIs, latency leaderboard, and system settings
+| Feature | Description |
+|---|---|
+| Multi-endpoint pools | Group endpoints into pools with passthrough or mapping model name modes |
+| Load balancing | Round Robin, Failover, and Random algorithms with automatic retry on failure |
+| Token quota | Supports unlimited, manual reset, daily auto-reset, and 5-hour rolling window |
+| Request count limit | Independent request cap per endpoint, supports manual/daily/5-hour rolling/per-minute reset |
+| Sliding window | 5-hour rolling window, old consumption auto-expires, no manual reset needed |
+| Latency stats | Collects per-endpoint latency, exposes P50/P90/P95 aggregates and a leaderboard |
+| IP rate limiting | Rate-limits unrecognized requests by IP to mitigate scanner traffic |
+| Custom routing | Configure external API prefixes with independent authentication keys |
+| Web dashboard | Visual management of endpoints, pools, APIs, latency leaderboard, and system settings |
 
 ## Quick Start
 
-### Option 1: Build from source
+### Option 1: Build from Source
 
 #### Prerequisites
 
@@ -68,7 +84,7 @@ curl http://localhost:8080/health
 - Docker
 - Docker Compose (optional)
 
-#### Docker Compose (recommended)
+#### Docker Compose (Recommended)
 
 ```bash
 cd tokenhub
@@ -114,7 +130,7 @@ curl http://localhost:8080/health
 ## Endpoints
 
 | Item | URL |
-|------|-----|
+|---|---|
 | Dashboard | `http://your-ip:8080/admin/` |
 | Default password | `admin123` |
 | API endpoint | `http://your-ip:8080/{prefix}/chat/completions` |
@@ -140,6 +156,13 @@ Config file is located at `/opt/tokenhub/config.toml`, auto-generated on first s
 ## Documentation
 
 See [REQUIREMENTS.md](./REQUIREMENTS.md) for full requirements.
+
+## Tech Stack
+
+- **Backend**: Rust + Actix-web 4
+- **Frontend**: Vanilla JS + Native Web Components
+- **Database**: File storage (TOML + JSON)
+- **Containerization**: Docker + Docker Compose
 
 ## License
 
