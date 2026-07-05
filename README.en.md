@@ -23,7 +23,7 @@
 | Feature | Description |
 |---|---|
 | Multi-endpoint pools | Group endpoints into pools with passthrough or mapping model name modes |
-| Load balancing | Round Robin, Failover, and Random algorithms with automatic retry on failure |
+| Load balancing | Round Robin, Failover, and Random algorithms; failed requests auto-retry on other pool endpoints |
 | Token quota | Supports unlimited, manual reset, daily auto-reset, and 5-hour rolling window |
 | Request count limit | Independent request cap per endpoint, supports manual/daily/5-hour rolling/per-minute reset |
 | Sliding window | 5-hour rolling window, old consumption auto-expires, no manual reset needed |

@@ -23,7 +23,7 @@
 | 功能 / Feature | 说明 / Description |
 |---|---|
 | 多端点代理池 / Multi-endpoint pools | 端点按池分组，支持透传和映射两种模型名称模式 |
-| 负载均衡调度 / Load balancing | 轮询、轮换、随机三种算法，随机模式失败自动重试 |
+| 负载均衡调度 / Load balancing | 轮询、轮换、随机三种算法，失败自动切换池内其他端点重试 |
 | Token 限额管控 / Token quota | 支持无上限、手动重置、每日自动重置、5小时滚动重置 |
 | 请求次数限额 / Request count limit | 独立于 Token 的请求次数上限，支持手动/每日/5小时滚动/每分钟重置 |
 | 滑动窗口算法 / Sliding window | 5小时滚动窗口，旧消耗自动失效，无需手动清零 |
