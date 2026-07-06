@@ -710,20 +710,16 @@ function renderEndpointsOverview() {
                         <span>${ep.api_type.toUpperCase()}</span>
                     </div>
                     <div class="endpoint-detail">
-                        <label>已用/限额</label>
+                        <label>已用Token/Token限额</label>
                         <span>${formatNumber(ep.tokens_used)} / ${formatLimit(ep.token_limit)}</span>
                     </div>
                     <div class="endpoint-detail">
-                        <label>总消耗</label>
+                        <label>已请求/请求限额</label>
+                        <span>${formatNumber(ep.requests_used)} / ${ep.request_limit > 0 ? formatNumber(ep.request_limit) : '无上限'}</span>
+                    </div>
+                    <div class="endpoint-detail">
+                        <label>总消耗Token</label>
                         <span>${formatNumber(ep.total_tokens_consumed)}</span>
-                    </div>
-                    <div class="endpoint-detail">
-                        <label>请求次数限额</label>
-                        <span>${ep.request_limit > 0 ? formatNumber(ep.request_limit) : '无上限'}</span>
-                    </div>
-                    <div class="endpoint-detail">
-                        <label>已请求次数</label>
-                        <span>${formatNumber(ep.requests_used)}</span>
                     </div>
                     <div class="endpoint-detail">
                         <label>总请求数</label>
