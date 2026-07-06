@@ -1052,6 +1052,14 @@ impl Stream for StreamLogWriter {
     }
 }
 
+impl Drop for StreamLogWriter {
+    fn drop(&mut self) {
+        if let Some(cb) = self.on_complete.take() {
+            (cb)();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

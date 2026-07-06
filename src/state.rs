@@ -90,7 +90,7 @@ impl AppState {
         };
 
         // 从 state.json 恢复运行时状态
-        app.load_runtime_state();
+        app.load_runtime_state().await;
 
         Ok(app)
     }
@@ -665,12 +665,12 @@ impl AppState {
     }
 
     /// 从 state.json 加载端点的运行时状态
-    pub fn load_runtime_state(&self) {
+    pub async fn load_runtime_state(&self) {
         let path = &self.state_path;
         if !path.exists() {
             return;
         }
-        let content = match std::fs::read_to_string(path) {
+        let content = match tokio::fs::read_to_string(path).await {
             Ok(c) => c,
             Err(e) => {
                 warn!("读取状态文件失败: {}", e);
@@ -979,7 +979,7 @@ impl AppState {
 
         // 每秒超过 3 个请求则限流，累计 10 次触发则封禁 60 秒
         if entry.count > 3 {
-            if entry.count > 10 {
+            if entry.count >= 10 {
                 entry.blocked_until = Some(now + std::time::Duration::from_secs(60));
             }
             return false;

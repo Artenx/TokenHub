@@ -161,7 +161,13 @@ function updateEndpointFullUrl() {
     
     // 检查 URL 路径中是否已包含版本前缀（如 /v1, /v6 等）
     // 如果已有版本前缀，直接拼接端点；否则添加 /v1
-    const urlPath = new URL(cleanBase).pathname;
+    let urlPath;
+    try {
+        urlPath = new URL(cleanBase).pathname;
+    } catch {
+        fullUrlDiv.textContent = '完整路径: ' + cleanBase + '/v1' + endpoint;
+        return;
+    }
     const hasVersionPrefix = /\/v\d+/.test(urlPath);
     
     const fullUrl = hasVersionPrefix

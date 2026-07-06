@@ -56,7 +56,8 @@ pub fn check_api_auth(
         .headers()
         .get("Authorization")
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer ").or(Some(v)))
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .filter(|v| !v.is_empty())
         .map(|v| v.to_string())
         .or_else(|| {
             req.headers()

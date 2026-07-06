@@ -334,11 +334,7 @@ impl EndpointState {
     pub fn reset(&mut self) {
         self.tokens_used = 0;
         self.last_reset = Utc::now();
-        self.request_last_reset = Utc::now();
-        self.error_count = 0;
         self.token_history.clear();
-        self.requests_used = 0;
-        self.request_history.clear();
     }
 }
 
