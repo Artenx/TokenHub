@@ -1101,53 +1101,62 @@ impl AppState {
             .ok_or_else(|| anyhow::anyhow!("端点不存在: {}", endpoint_id))?;
 
         let base_url = endpoint.config.url.trim_end_matches('/');
-        let models_url = match endpoint.config.api_type {
-            ApiType::Custom => base_url.to_string(),
+
+        let candidate_urls: Vec<String> = match endpoint.config.api_type {
+            ApiType::Custom => {
+                let mut urls = vec![base_url.to_string()];
+                if let Some(fallback) = crate::models::fallback_models_url(base_url) {
+                    if fallback != base_url {
+                        urls.push(fallback);
+                    }
+                }
+                urls
+            }
             _ => {
-                if base_url.ends_with("/v1") || base_url.ends_with("/v1/") {
+                vec![if base_url.ends_with("/v1") || base_url.ends_with("/v1/") {
                     format!("{}/models", base_url)
                 } else {
                     format!("{}/v1/models", base_url)
-                }
+                }]
             }
         };
 
-        let mut request_builder = self.http_client.get(&models_url)
-            .header("Content-Type", "application/json");
+        for models_url in &candidate_urls {
+            let mut request_builder = self.http_client.get(models_url)
+                .header("Content-Type", "application/json");
 
-        match endpoint.config.api_type {
-            ApiType::OpenAI | ApiType::OpenAIResponses | ApiType::Custom => {
-                request_builder = request_builder.header("Authorization", format!("Bearer {}", endpoint.config.api_key));
+            match endpoint.config.api_type {
+                ApiType::OpenAI | ApiType::OpenAIResponses | ApiType::Custom => {
+                    request_builder = request_builder.header("Authorization", format!("Bearer {}", endpoint.config.api_key));
+                }
+                ApiType::Anthropic => {
+                    request_builder = request_builder.header("x-api-key", &endpoint.config.api_key);
+                    request_builder = request_builder.header("anthropic-version", "2023-06-01");
+                }
             }
-            ApiType::Anthropic => {
-                request_builder = request_builder.header("x-api-key", &endpoint.config.api_key);
-                request_builder = request_builder.header("anthropic-version", "2023-06-01");
-            }
-        }
 
-        match request_builder.timeout(std::time::Duration::from_secs(10)).send().await {
-            Ok(response) => {
-                if response.status().is_success() {
-                    let text = response.text().await.unwrap_or_default();
-                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                        if let Some(data) = json["data"].as_array() {
-                            let models: Vec<String> = data.iter()
-                                .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))
-                                .collect();
-                            // 更新缓存
-                            self.update_model_cache(endpoint_id, models.clone());
-                            return Ok(models);
+            match request_builder.timeout(std::time::Duration::from_secs(10)).send().await {
+                Ok(response) => {
+                    if response.status().is_success() {
+                        let text = response.text().await.unwrap_or_default();
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                            if let Some(data) = json["data"].as_array() {
+                                let models: Vec<String> = data.iter()
+                                    .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))
+                                    .collect();
+                                self.update_model_cache(endpoint_id, models.clone());
+                                return Ok(models);
+                            }
                         }
                     }
                 }
-                Ok(vec![])
-            }
-            Err(e) => {
-                warn!("获取端点 {} 模型列表失败: {}", endpoint.config.name, e);
-                Ok(vec![])
+                Err(e) => {
+                    warn!("获取端点 {} 模型列表失败: {}", endpoint.config.name, e);
+                }
             }
         }
-    }
+
+        Ok(vec![])
 
     /// 匹配模型名称（不区分大小写，后缀匹配）
     /// 返回匹配到的端点实际模型名称

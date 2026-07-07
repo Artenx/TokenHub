@@ -235,80 +235,96 @@ pub async fn list_models(
 
     let base_url = ep.url.trim_end_matches('/');
 
-    // 根据接口类型构建认证头
-    let models_url = match ep.api_type {
-        crate::models::ApiType::Custom => base_url.to_string(),
+    // 构建候选 URL 列表：Custom 端点支持回退到 /v1/models
+    let candidate_urls: Vec<String> = match ep.api_type {
+        crate::models::ApiType::Custom => {
+            let mut urls = vec![base_url.to_string()];
+            if let Some(fallback) = crate::models::fallback_models_url(base_url) {
+                if fallback != base_url {
+                    urls.push(fallback);
+                }
+            }
+            urls
+        }
         _ => {
-            if base_url.ends_with("/v1") || base_url.ends_with("/v1/") {
+            vec![if base_url.ends_with("/v1") || base_url.ends_with("/v1/") {
                 format!("{}/models", base_url)
             } else {
                 format!("{}/v1/models", base_url)
-            }
+            }]
         }
     };
 
-    let mut request_builder = client.get(&models_url)
-        .header("Content-Type", "application/json");
+    // 依次尝试每个候选 URL，返回第一个成功的
+    let mut last_tested = String::new();
+    let mut last_status = 0u16;
+    let mut last_message = String::new();
 
-    match ep.api_type {
-        crate::models::ApiType::OpenAI | crate::models::ApiType::OpenAIResponses | crate::models::ApiType::Custom => {
-            request_builder = request_builder.header("Authorization", format!("Bearer {}", ep.api_key));
-        }
-        crate::models::ApiType::Anthropic => {
-            request_builder = request_builder.header("x-api-key", &ep.api_key);
-            request_builder = request_builder.header("anthropic-version", "2023-06-01");
-        }
-    }
+    for models_url in &candidate_urls {
+        last_tested = models_url.clone();
 
-    match request_builder.timeout(std::time::Duration::from_secs(10)).send().await {
-        Ok(response) => {
-            let status = response.status();
-            let response_text = response.text().await.unwrap_or_default();
-            
-            if status.is_success() {
-                let models = if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response_text) {
-                    if let Some(data) = json["data"].as_array() {
-                        data.iter()
-                            .filter_map(|m| {
-                                let id = m["id"].as_str()?;
-                                let owned_by = m["owned_by"].as_str().unwrap_or("unknown");
-                                Some(serde_json::json!({
-                                    "id": id,
-                                    "owned_by": owned_by
-                                }))
-                            })
-                            .collect::<Vec<_>>()
-                    } else {
-                        vec![]
-                    }
-                } else {
-                    vec![]
-                };
-                
-                Ok(HttpResponse::Ok().json(serde_json::json!({
-                    "success": true,
-                    "models": models,
-                    "status": status.as_u16(),
-                    "tested_url": models_url
-                })))
-            } else {
-                Ok(HttpResponse::Ok().json(serde_json::json!({
-                    "success": false,
-                    "message": format!("获取模型列表失败 (HTTP {}): {}", status, &response_text.chars().take(200).collect::<String>()),
-                    "status": status.as_u16(),
-                    "tested_url": models_url
-                })))
+        let mut request_builder = client.get(models_url)
+            .header("Content-Type", "application/json");
+
+        match ep.api_type {
+            crate::models::ApiType::OpenAI | crate::models::ApiType::OpenAIResponses | crate::models::ApiType::Custom => {
+                request_builder = request_builder.header("Authorization", format!("Bearer {}", ep.api_key));
+            }
+            crate::models::ApiType::Anthropic => {
+                request_builder = request_builder.header("x-api-key", &ep.api_key);
+                request_builder = request_builder.header("anthropic-version", "2023-06-01");
             }
         }
-        Err(e) => {
-            Ok(HttpResponse::Ok().json(serde_json::json!({
-                "success": false,
-                "message": format!("连接失败: {}", e),
-                "status": 0,
-                "tested_url": models_url
-            })))
+
+        match request_builder.timeout(std::time::Duration::from_secs(10)).send().await {
+            Ok(response) => {
+                last_status = response.status().as_u16();
+                let response_text = response.text().await.unwrap_or_default();
+
+                if response.status().is_success() {
+                    let models = if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response_text) {
+                        if let Some(data) = json["data"].as_array() {
+                            data.iter()
+                                .filter_map(|m| {
+                                    let id = m["id"].as_str()?;
+                                    let owned_by = m["owned_by"].as_str().unwrap_or("unknown");
+                                    Some(serde_json::json!({
+                                        "id": id,
+                                        "owned_by": owned_by
+                                    }))
+                                })
+                                .collect::<Vec<_>>()
+                        } else {
+                            vec![]
+                        }
+                    } else {
+                        vec![]
+                    };
+
+                    return Ok(HttpResponse::Ok().json(serde_json::json!({
+                        "success": true,
+                        "models": models,
+                        "status": response.status().as_u16(),
+                        "tested_url": models_url
+                    })));
+                } else {
+                    last_message = format!("获取模型列表失败 (HTTP {}): {}", response.status(), &response_text.chars().take(200).collect::<String>());
+                    continue;
+                }
+            }
+            Err(e) => {
+                last_message = format!("连接失败: {}", e);
+                continue;
+            }
         }
     }
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "success": false,
+        "message": last_message,
+        "status": last_status,
+        "tested_url": last_tested
+    })))
 }
 
 /// 对话测试

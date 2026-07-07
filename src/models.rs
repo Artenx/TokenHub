@@ -653,3 +653,22 @@ pub struct EndpointLatencyStats {
     /// 错误率（百分比，0-100）
     pub error_rate: f64,
 }
+
+/// 从 Custom 类型端点 URL 提取用于模型列表查询的回退 URL
+///
+/// 当用户配置了具体资源路径（如 /v1/images/generations）时，
+/// 尝试回退到 /v1/models 获取模型列表。
+pub fn fallback_models_url(url: &str) -> Option<String> {
+    let url = url.trim_end_matches('/');
+    if let Some(scheme_end) = url.find("://") {
+        let after_scheme = &url[scheme_end + 3..];
+        if let Some(first_slash) = after_scheme.find('/') {
+            let authority = &after_scheme[..first_slash];
+            Some(format!("{}://{}/v1/models", &url[..scheme_end], authority))
+        } else {
+            Some(format!("{}/v1/models", url))
+        }
+    } else {
+        None
+    }
+}
