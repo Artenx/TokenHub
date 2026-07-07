@@ -281,7 +281,7 @@ pub async fn list_models(
                 last_status = response.status().as_u16();
                 let response_text = response.text().await.unwrap_or_default();
 
-                if response.status().is_success() {
+                if last_status >= 200 && last_status < 300 {
                     let models = if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response_text) {
                         if let Some(data) = json["data"].as_array() {
                             data.iter()
@@ -304,11 +304,11 @@ pub async fn list_models(
                     return Ok(HttpResponse::Ok().json(serde_json::json!({
                         "success": true,
                         "models": models,
-                        "status": response.status().as_u16(),
+                        "status": last_status,
                         "tested_url": models_url
                     })));
                 } else {
-                    last_message = format!("获取模型列表失败 (HTTP {}): {}", response.status(), &response_text.chars().take(200).collect::<String>());
+                    last_message = format!("获取模型列表失败 (HTTP {}): {}", last_status, &response_text.chars().take(200).collect::<String>());
                     continue;
                 }
             }
