@@ -3020,7 +3020,7 @@ async function loadApiTestModels(prefix, apiKey, apiType, baseUrl, pool, poolEnd
             renderApiModelSelectionList(models, {
                 prefix,
                 api_key: apiKey,
-                api_type,
+                api_type: apiType,
                 base_url: baseUrl,
                 model_mappings: modelMappings,
                 endpoint_id: selectedEndpoint.id
