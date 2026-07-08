@@ -1,4 +1,5 @@
 use crate::error::AppError;
+use crate::get_client_ip;
 use crate::models::*;
 use crate::scheduler::Scheduler;
 use crate::state::AppState;
@@ -405,7 +406,7 @@ pub async fn forward_request(
     api_prefix: Option<String>,
 ) -> Result<HttpResponse, AppError> {
     let start = std::time::Instant::now();
-    let client_ip = req.connection_info().peer_addr().unwrap_or("unknown").to_string();
+    let client_ip = get_client_ip(req);
     let method = req.method().to_string();
     let mut last_endpoint_id: Option<String> = None;
     let mut last_endpoint_name: Option<String> = None;
@@ -530,7 +531,7 @@ pub async fn forward_stream_request(
     api_prefix: Option<String>,
 ) -> Result<HttpResponse, AppError> {
     let start = std::time::Instant::now();
-    let client_ip = req.connection_info().peer_addr().unwrap_or("unknown").to_string();
+    let client_ip = get_client_ip(req);
     let method = req.method().to_string();
     let usage_tracker = Arc::new(Mutex::new(None::<TokenUsage>));
     let mut last_endpoint_id: Option<String> = None;

@@ -17,14 +17,36 @@ use state::AppState;
 use tracing::info;
 use tracing_subscriber::{fmt, EnvFilter};
 
+/// 从 X-Forwarded-For / X-Real-IP 头获取真实客户端 IP，回退到 peer_addr
+pub(crate) fn get_client_ip(req: &HttpRequest) -> String {
+    if let Some(val) = req.headers().get("X-Forwarded-For") {
+        if let Ok(ip) = val.to_str() {
+            if let Some(first) = ip.split(',').next() {
+                let trimmed = first.trim();
+                if !trimmed.is_empty() {
+                    return trimmed.to_string();
+                }
+            }
+        }
+    }
+    if let Some(val) = req.headers().get("X-Real-IP") {
+        if let Ok(ip) = val.to_str() {
+            let trimmed = ip.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+    }
+    req.connection_info().peer_addr().unwrap_or("unknown").to_string()
+}
+
 /// API代理入口 - 处理所有 /v1/ 和 /api/ 路径的请求
 async fn api_proxy(
     state: web::Data<AppState>,
     req: HttpRequest,
     body: web::Bytes,
 ) -> Result<HttpResponse, error::AppError> {
-    let conn_info = req.connection_info();
-    let client_ip = conn_info.peer_addr().unwrap_or("unknown").to_string();
+    let client_ip = get_client_ip(&req);
     let path = req.uri().path().to_string();
 
     // 提前获取命中的 API 前缀，用于 IP 限流判断
