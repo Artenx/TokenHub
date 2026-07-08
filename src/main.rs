@@ -233,6 +233,9 @@ async fn main() -> std::io::Result<()> {
             .route("/admin/api/latency-leaderboard", web::get().to(admin::list_latency_leaderboard))
             // 静态文件（管理后台前端）
             .service(fs::Files::new("/admin", "static").index_file("index.html"))
+            // 常见浏览器请求处理
+            .route("/favicon.ico", web::get().to(|| async { HttpResponse::NoContent().finish() }))
+            .route("/robots.txt", web::get().to(|| async { HttpResponse::Ok().content_type("text/plain").body("User-agent: *\nDisallow: /\n") }))
             // API代理（必须放在最后，捕获所有其他路径）
             .default_service(web::route().to(api_proxy))
     });
