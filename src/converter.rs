@@ -496,7 +496,7 @@ pub fn convert_request(body: &Value, from: &crate::models::ApiType, to: &crate::
 }
 
 /// 去除上游端点常见的非标准参数，避免 400 错误
-fn sanitize_openai_params(body: &mut Value) {
+pub(crate) fn sanitize_openai_params(body: &mut Value) {
     if let Some(obj) = body.as_object_mut() {
         obj.remove("thinking");
         obj.remove("reasoning_effort");

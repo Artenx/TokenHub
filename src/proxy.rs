@@ -608,6 +608,14 @@ pub async fn forward_stream_request(
             mapped_body
         };
 
+        // 清理非标准参数，防止上游端点拒绝
+        let converted_body = if let Ok(mut json) = serde_json::from_slice::<serde_json::Value>(&converted_body) {
+            crate::converter::sanitize_openai_params(&mut json);
+            bytes::Bytes::from(serde_json::to_vec(&json).unwrap_or(converted_body.to_vec()))
+        } else {
+            converted_body
+        };
+
         debug!("流式转发到: {} (尝试 {}/{})", target_url, attempt + 1, ctx.max_retries);
 
         let request_builder = build_upstream_request(state.get_ref(), req, &endpoint, &target_url, &converted_body)?;
@@ -871,60 +879,79 @@ pub async fn forward_stream_request(
     }
 }
 
-/// 转发请求到指定端点（非流式）
-async fn forward_to_endpoint(
+/// 从上游错误消息中提取不支持的参数名（用于自动剥离后重试）
+fn extract_unsupported_params(error_body: &str) -> Vec<String> {
+    let mut params = Vec::new();
+    let body_lower = error_body.to_lowercase();
+
+    // Pattern: "Unsupported parameter(s): `param1`, `param2`" (nvidia/OpenAI style)
+    if body_lower.contains("unsupported parameter") {
+        for part in error_body.split('`') {
+            let p = part.trim();
+            if !p.is_empty() && p.len() > 1 && p.len() < 100
+                && p.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+                && !p.contains(' ') && !p.contains(':') {
+                params.push(p.to_string());
+            }
+        }
+    }
+
+    // Pattern: "field FooBar invalid, should be one of:" (商汤 style) → convert CamelCase to snake_case
+    if body_lower.contains("should be one of") {
+        if let Some(pos) = body_lower.find("field ") {
+            let after = &body_lower[pos + 6..];
+            if let Some(end) = after.find(" invalid") {
+                let field = after[..end].trim();
+                let snake: String = {
+                    let mut s = String::new();
+                    for (i, c) in field.chars().enumerate() {
+                        if c.is_uppercase() && i > 0 { s.push('_'); }
+                        s.push(c.to_ascii_lowercase());
+                    }
+                    s
+                };
+                if !snake.is_empty() && snake.len() < 100
+                    && snake.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    params.push(snake);
+                }
+            }
+        }
+    }
+
+    params
+}
+
+/// 从请求体中移除不支持的参数，返回剥离后的 body（如果无参数可移除则返回 None）
+fn strip_unsupported_params(error_body: &str, body_bytes: &bytes::Bytes) -> Option<bytes::Bytes> {
+    let params = extract_unsupported_params(error_body);
+    if params.is_empty() { return None; }
+    if let Ok(mut json) = serde_json::from_slice::<serde_json::Value>(body_bytes) {
+        if let Some(obj) = json.as_object_mut() {
+            let mut removed = false;
+            for p in &params {
+                if obj.remove(p.as_str()).is_some() { removed = true; }
+            }
+            if !removed { return None; }
+        }
+        Some(bytes::Bytes::from(serde_json::to_vec(&json).unwrap_or(body_bytes.to_vec())))
+    } else {
+        None
+    }
+}
+
+/// 处理上游成功响应（提取公共逻辑，供正常路径和参数剥离重试路径复用）
+async fn process_upstream_success(
     state: &AppState,
-    req: &HttpRequest,
-    body: &bytes::Bytes,
     endpoint: &EndpointState,
+    response: reqwest::Response,
+    status: reqwest::StatusCode,
+    headers: &reqwest::header::HeaderMap,
+    start: std::time::Instant,
     path: &str,
     client_api_type: &ApiType,
 ) -> Result<(HttpResponse, TokenUsage), EndpointCallError> {
-    let target_path = crate::converter::convert_path(path, client_api_type, &endpoint.config.api_type);
-    let target_url = if endpoint.config.api_type == crate::models::ApiType::Custom {
-        endpoint.config.url.clone()
-    } else {
-        build_target_url(&endpoint.config.url, &target_path)
-    };
-    debug!("转发到: {} (客户端格式: {:?}, 端点格式: {:?})", target_url, client_api_type, endpoint.config.api_type);
-
-    // 转换请求体
-    let converted_body = if std::mem::discriminant(client_api_type) != std::mem::discriminant(&endpoint.config.api_type) {
-        if let Ok(json) = serde_json::from_slice::<serde_json::Value>(body) {
-            let converted = crate::converter::convert_request(&json, client_api_type, &endpoint.config.api_type);
-            debug!("请求体已从 {:?} 转换为 {:?}", client_api_type, endpoint.config.api_type);
-            bytes::Bytes::from(serde_json::to_vec(&converted).unwrap_or(body.to_vec()))
-        } else {
-            body.clone()
-        }
-    } else {
-        body.clone()
-    };
-
-    let request_builder = build_upstream_request(state, req, endpoint, &target_url, &converted_body)?;
-    let start = std::time::Instant::now();
-    let response = send_request(request_builder, &endpoint.config.name, endpoint.config.timeout).await?;
-    let status = response.status();
-    let headers = response.headers().clone();
-
-    if status != 200 {
-        let error_body = response.text().await.unwrap_or_default();
-        let duration_ms = start.elapsed().as_millis() as u64;
-        state.record_latency(&endpoint.config.id, duration_ms);
-        error!("端点 {} 返回错误状态 {}: {}", endpoint.config.name, status, error_body);
-        let sanitized = sanitize_error_body(&error_body);
-        let error = if status.is_client_error() && status.as_u16() != 429 {
-            AppError::UpstreamError(format!("上游返回状态 {}: {}", status, sanitized))
-        } else {
-            AppError::Proxy(format!("上游返回状态 {}: {}", status, sanitized))
-        };
-        return Err(EndpointCallError {
-            error,
-            raw_message: Some(sanitized),
-        });
-    }
-
-    let response_body = response.bytes().await.map_err(|e| AppError::Proxy(format!("读取响应失败: {}", e)))?;
+    let response_body = response.bytes().await
+        .map_err(|e| AppError::Proxy(format!("读取响应失败: {}", e)))?;
     let duration_ms = start.elapsed().as_millis() as u64;
     state.record_latency(&endpoint.config.id, duration_ms);
 
@@ -943,14 +970,12 @@ async fn forward_to_endpoint(
         }
     }
 
-    // 转换响应体（仅对 chat/completions 和 responses/messages 路径转换，/models 等特殊路径不转换）
     let is_api_request = path == "chat/completions" || path.starts_with("chat/completions?")
         || path == "responses" || path.starts_with("responses?")
         || path == "messages" || path.starts_with("messages?");
     let final_body = if is_api_request && std::mem::discriminant(client_api_type) != std::mem::discriminant(&endpoint.config.api_type) {
         if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&response_body) {
             let converted = crate::converter::convert_response(&json, &endpoint.config.api_type, client_api_type);
-            debug!("响应体已从 {:?} 转换为 {:?}", endpoint.config.api_type, client_api_type);
             bytes::Bytes::from(serde_json::to_vec(&converted).unwrap_or(response_body.to_vec()))
         } else {
             response_body
@@ -964,9 +989,8 @@ async fn forward_to_endpoint(
             .unwrap_or(actix_web::http::StatusCode::OK),
     );
 
-    for (key, value) in &headers {
+    for (key, value) in headers {
         let key_str = key.as_str().to_lowercase();
-        // 跳过连接控制头和传输编码头（actix-web 会自动处理）
         if key_str == "connection" || key_str == "transfer-encoding" {
             continue;
         }
@@ -976,6 +1000,93 @@ async fn forward_to_endpoint(
     }
 
     Ok((response_builder.body(final_body), token_usage))
+}
+
+/// 转发请求到指定端点（非流式）
+async fn forward_to_endpoint(
+    state: &AppState,
+    req: &HttpRequest,
+    body: &bytes::Bytes,
+    endpoint: &EndpointState,
+    path: &str,
+    client_api_type: &ApiType,
+) -> Result<(HttpResponse, TokenUsage), EndpointCallError> {
+    let target_path = crate::converter::convert_path(path, client_api_type, &endpoint.config.api_type);
+    let target_url = if endpoint.config.api_type == crate::models::ApiType::Custom {
+        endpoint.config.url.clone()
+    } else {
+        build_target_url(&endpoint.config.url, &target_path)
+    };
+    debug!("转发到: {} (客户端格式: {:?}, 端点格式: {:?})", target_url, client_api_type, endpoint.config.api_type);
+
+    let converted_body = if std::mem::discriminant(client_api_type) != std::mem::discriminant(&endpoint.config.api_type) {
+        if let Ok(json) = serde_json::from_slice::<serde_json::Value>(body) {
+            let converted = crate::converter::convert_request(&json, client_api_type, &endpoint.config.api_type);
+            debug!("请求体已从 {:?} 转换为 {:?}", client_api_type, endpoint.config.api_type);
+            bytes::Bytes::from(serde_json::to_vec(&converted).unwrap_or(body.to_vec()))
+        } else {
+            body.clone()
+        }
+    } else {
+        body.clone()
+    };
+
+    let request_builder = build_upstream_request(state, req, endpoint, &target_url, &converted_body)?;
+    let start = std::time::Instant::now();
+    let response = send_request(request_builder, &endpoint.config.name, endpoint.config.timeout).await?;
+    let status = response.status();
+    let headers = response.headers().clone();
+
+    if status == 200 {
+        return process_upstream_success(state, endpoint, response, status, &headers, start, path, client_api_type).await;
+    }
+
+    let error_body = response.text().await.unwrap_or_default();
+    let duration_ms = start.elapsed().as_millis() as u64;
+    state.record_latency(&endpoint.config.id, duration_ms);
+
+    // 如果是 400 + 参数不支持错误，自动剥离参数后重试同一端点
+    if status == 400 {
+        if let Some(stripped_body) = strip_unsupported_params(&error_body, &converted_body) {
+            debug!("端点 {} 不支持部分参数，剥离后重试", endpoint.config.name);
+            let retry_builder = build_upstream_request(state, req, endpoint, &target_url, &stripped_body)?;
+            match send_request(retry_builder, &endpoint.config.name, endpoint.config.timeout).await {
+                Ok(retry) => {
+                    let retry_status = retry.status();
+                    if retry_status == 200 {
+                        let retry_headers = retry.headers().clone();
+                        return process_upstream_success(state, endpoint, retry, retry_status, &retry_headers, start, path, client_api_type).await;
+                    }
+                    let retry_error_body = retry.text().await.unwrap_or_default();
+                    let retry_duration = start.elapsed().as_millis() as u64;
+                    state.record_latency(&endpoint.config.id, retry_duration);
+                    error!("端点 {} 剥离参数后仍然失败 {}: {}", endpoint.config.name, retry_status, retry_error_body);
+                    let sanitized = sanitize_error_body(&retry_error_body);
+                    return Err(EndpointCallError {
+                        error: AppError::UpstreamError(format!("上游返回状态 {}: {}", retry_status, sanitized)),
+                        raw_message: Some(sanitized),
+                    });
+                }
+                Err(e) => {
+                    error!("端点 {} 剥离参数重试时连接失败: {}", endpoint.config.name, e);
+                    let msg = format!("剥离参数重试失败: {}", e);
+                    return Err(EndpointCallError { error: AppError::Proxy(msg), raw_message: None });
+                }
+            }
+        }
+    }
+
+    error!("端点 {} 返回错误状态 {}: {}", endpoint.config.name, status, error_body);
+    let sanitized = sanitize_error_body(&error_body);
+    let error = if status.is_client_error() && status.as_u16() != 429 {
+        AppError::UpstreamError(format!("上游返回状态 {}: {}", status, sanitized))
+    } else {
+        AppError::Proxy(format!("上游返回状态 {}: {}", status, sanitized))
+    };
+    Err(EndpointCallError {
+        error,
+        raw_message: Some(sanitized),
+    })
 }
 
 /// 详细的 Token 使用量
