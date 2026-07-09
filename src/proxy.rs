@@ -324,10 +324,12 @@ impl RetryContext {
 
     /// 返回最终错误
     fn into_final_error(self) -> AppError {
-        if let Some(e) = &self.last_error {
-            warn!("端点池所有接口均不可用，最后错误: {}", e);
-        }
-        AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())
+        let detail = self.last_error
+            .as_ref()
+            .map(|e| format!("，最后错误: {}", e))
+            .unwrap_or_default();
+        warn!("端点池所有接口均不可用{}", detail);
+        AppError::Proxy(format!("端点池所有接口均不可用{}，请检查后重试。", detail))
     }
 }
 
@@ -865,7 +867,7 @@ pub async fn forward_stream_request(
             }
             Err(e)
         }
-        None => Err(AppError::Internal("所有端点不可用，且无错误信息".to_string())),
+        None => Err(ctx.into_final_error()),
     }
 }
 
