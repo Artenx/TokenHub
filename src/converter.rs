@@ -471,7 +471,11 @@ pub fn convert_request(body: &Value, from: &crate::models::ApiType, to: &crate::
     use crate::models::ApiType;
 
     if std::mem::discriminant(from) == std::mem::discriminant(to) {
-        return body.clone();
+        let mut body = body.clone();
+        if matches!(from, ApiType::OpenAI | ApiType::OpenAIResponses) {
+            sanitize_openai_params(&mut body);
+        }
+        return body;
     }
 
     // 先解析为统一格式
@@ -488,6 +492,15 @@ pub fn convert_request(body: &Value, from: &crate::models::ApiType, to: &crate::
         ApiType::OpenAIResponses => to_openai_responses(&unified),
         ApiType::Anthropic => to_anthropic(&unified),
         ApiType::Custom => to_openai(&unified),
+    }
+}
+
+/// 去除上游端点常见的非标准参数，避免 400 错误
+fn sanitize_openai_params(body: &mut Value) {
+    if let Some(obj) = body.as_object_mut() {
+        obj.remove("thinking");
+        obj.remove("reasoning_effort");
+        obj.remove("top_k");
     }
 }
 
