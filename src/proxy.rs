@@ -31,6 +31,14 @@ const ERROR_KEYWORDS: &[&str] = &[
     "insufficient_quota",
     "overloaded",
     "capacity exceeded",
+    "额度不足",
+    "额度已用",
+    "额度已不足",
+    "额度已用完",
+    "额度已用尽",
+    "token已用完",
+    "token已不足",
+    "token额度",
 ];
 
 // ========== 错误检测 ==========
