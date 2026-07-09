@@ -471,11 +471,7 @@ pub fn convert_request(body: &Value, from: &crate::models::ApiType, to: &crate::
     use crate::models::ApiType;
 
     if std::mem::discriminant(from) == std::mem::discriminant(to) {
-        let mut body = body.clone();
-        if matches!(from, ApiType::OpenAI | ApiType::OpenAIResponses) {
-            sanitize_openai_params(&mut body);
-        }
-        return body;
+        return body.clone();
     }
 
     // 先解析为统一格式

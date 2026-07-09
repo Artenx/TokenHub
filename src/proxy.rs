@@ -608,19 +608,11 @@ pub async fn forward_stream_request(
             mapped_body
         };
 
-        // 清理非标准参数，防止上游端点拒绝
-        let converted_body = if let Ok(mut json) = serde_json::from_slice::<serde_json::Value>(&converted_body) {
-            crate::converter::sanitize_openai_params(&mut json);
-            bytes::Bytes::from(serde_json::to_vec(&json).unwrap_or(converted_body.to_vec()))
-        } else {
-            converted_body
-        };
-
         debug!("流式转发到: {} (尝试 {}/{})", target_url, attempt + 1, ctx.max_retries);
 
         let request_builder = build_upstream_request(state.get_ref(), req, &endpoint, &target_url, &converted_body)?;
-        let req_start = std::time::Instant::now();
-        let response = match send_request(request_builder, &endpoint.config.name, endpoint.config.timeout).await {
+        let mut req_start = std::time::Instant::now();
+        let mut response = match send_request(request_builder, &endpoint.config.name, endpoint.config.timeout).await {
             Ok(r) => r,
             Err(e) => {
                 state.increment_endpoint_errors(&endpoint_id);
@@ -633,25 +625,50 @@ pub async fn forward_stream_request(
             }
         };
 
-        let resp_status = response.status();
+        let mut resp_status = response.status();
         if resp_status != 200 {
             let error_body = response.text().await.unwrap_or_default();
-            let duration_ms = req_start.elapsed().as_millis() as u64;
-            state.record_latency(&endpoint_id, duration_ms);
-            warn!("端点 {} 返回错误状态 {}: {}", endpoint.config.name, resp_status, error_body);
-            state.increment_endpoint_errors(&endpoint_id);
-            let sanitized = sanitize_error_body(&error_body);
-            let e = if resp_status.is_client_error() && resp_status.as_u16() != 429 {
-                AppError::UpstreamError(format!("上游返回状态 {}: {}", resp_status, sanitized))
-            } else {
-                AppError::Proxy(format!("上游返回状态 {}: {}", resp_status, sanitized))
-            };
-            state.release_endpoint_request(&endpoint_id);
-            if !ctx.record_error(e, Some(sanitized)) {
-                result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
-                break;
+
+            // 如果是 400 + 参数不支持，自动剥离参数后重试同一端点
+            if resp_status == 400 {
+                if let Some(stripped) = strip_unsupported_params(&error_body, &converted_body) {
+                    let retry_builder = build_upstream_request(state.get_ref(), req, &endpoint, &target_url, &stripped);
+                    if let Ok(builder) = retry_builder {
+                        match send_request(builder, &endpoint.config.name, endpoint.config.timeout).await {
+                            Ok(retry) => {
+                                if retry.status() == 200 {
+                                    debug!("端点 {} 流式剥离参数后重试成功", endpoint.config.name);
+                                    response = retry;
+                                    resp_status = retry.status();
+                                    req_start = std::time::Instant::now();
+                                }
+                            }
+                            Err(e) => {
+                                warn!("端点 {} 流式剥离参数重试连接失败: {}", endpoint.config.name, e);
+                            }
+                        }
+                    }
+                }
             }
-            continue;
+
+            if resp_status != 200 {
+                let duration_ms = req_start.elapsed().as_millis() as u64;
+                state.record_latency(&endpoint_id, duration_ms);
+                warn!("端点 {} 返回错误状态 {}: {}", endpoint.config.name, resp_status, error_body);
+                state.increment_endpoint_errors(&endpoint_id);
+                let sanitized = sanitize_error_body(&error_body);
+                let e = if resp_status.is_client_error() && resp_status.as_u16() != 429 {
+                    AppError::UpstreamError(format!("上游返回状态 {}: {}", resp_status, sanitized))
+                } else {
+                    AppError::Proxy(format!("上游返回状态 {}: {}", resp_status, sanitized))
+                };
+                state.release_endpoint_request(&endpoint_id);
+                if !ctx.record_error(e, Some(sanitized)) {
+                    result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
+                    break;
+                }
+                continue;
+            }
         }
 
         // 保存上游响应头，后续透传给客户端
