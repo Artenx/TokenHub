@@ -612,7 +612,7 @@ pub async fn forward_stream_request(
 
         let request_builder = build_upstream_request(state.get_ref(), req, &endpoint, &target_url, &converted_body)?;
         let mut req_start = std::time::Instant::now();
-        let mut response = match send_request(request_builder, &endpoint.config.name, endpoint.config.timeout).await {
+        let mut response: Option<reqwest::Response> = Some(match send_request(request_builder, &endpoint.config.name, endpoint.config.timeout).await {
             Ok(r) => r,
             Err(e) => {
                 state.increment_endpoint_errors(&endpoint_id);
@@ -623,11 +623,11 @@ pub async fn forward_stream_request(
                 }
                 continue;
             }
-        };
+        });
 
-        let mut resp_status = response.status();
+        let mut resp_status = response.as_ref().unwrap().status();
         if resp_status != 200 {
-            let error_body = response.text().await.unwrap_or_default();
+            let error_body = response.take().unwrap().text().await.unwrap_or_default();
 
             // 如果是 400 + 参数不支持，自动剥离参数后重试同一端点
             if resp_status == 400 {
@@ -636,10 +636,11 @@ pub async fn forward_stream_request(
                     if let Ok(builder) = retry_builder {
                         match send_request(builder, &endpoint.config.name, endpoint.config.timeout).await {
                             Ok(retry) => {
-                                if retry.status() == 200 {
+                                let retry_status = retry.status();
+                                if retry_status == 200 {
                                     debug!("端点 {} 流式剥离参数后重试成功", endpoint.config.name);
-                                    response = retry;
-                                    resp_status = retry.status();
+                                    response = Some(retry);
+                                    resp_status = retry_status;
                                     req_start = std::time::Instant::now();
                                 }
                             }
@@ -670,6 +671,8 @@ pub async fn forward_stream_request(
                 continue;
             }
         }
+
+        let response = response.unwrap();
 
         // 保存上游响应头，后续透传给客户端
         let upstream_headers = response.headers().clone();
