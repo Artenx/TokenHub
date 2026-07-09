@@ -944,15 +944,29 @@ fn extract_unsupported_params(error_body: &str) -> Vec<String> {
 /// 从请求体中移除不支持的参数，返回剥离后的 body（如果无参数可移除则返回 None）
 fn strip_unsupported_params(error_body: &str, body_bytes: &bytes::Bytes) -> Option<bytes::Bytes> {
     let params = extract_unsupported_params(error_body);
-    if params.is_empty() { return None; }
+    let body_lower = error_body.to_lowercase();
+    let has_tool_issue = body_lower.contains("tool_call");
+
+    if params.is_empty() && !has_tool_issue { return None; }
     if let Ok(mut json) = serde_json::from_slice::<serde_json::Value>(body_bytes) {
+        let mut changed = false;
         if let Some(obj) = json.as_object_mut() {
-            let mut removed = false;
             for p in &params {
-                if obj.remove(p.as_str()).is_some() { removed = true; }
+                if obj.remove(p.as_str()).is_some() { changed = true; }
             }
-            if !removed { return None; }
+            // 移除 tool 相关字段（当上游端点报告 tool_call_id 错误时）
+            if has_tool_issue {
+                if let Some(messages) = obj.get_mut("messages").and_then(|m| m.as_array_mut()) {
+                    for msg in messages.iter_mut() {
+                        if let Some(msg_obj) = msg.as_object_mut() {
+                            if msg_obj.remove("tool_call_id").is_some() { changed = true; }
+                            if msg_obj.remove("tool_calls").is_some() { changed = true; }
+                        }
+                    }
+                }
+            }
         }
+        if !changed { return None; }
         Some(bytes::Bytes::from(serde_json::to_vec(&json).unwrap_or(body_bytes.to_vec())))
     } else {
         None
