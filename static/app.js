@@ -6,6 +6,7 @@ let currentEndpoints = [];
 let currentConfig = {};
 let currentPools = [];
 let currentApis = [];
+let endpointSearchTerm = '';
 
 // 初始化
 document.addEventListener('DOMContentLoaded', () => {
@@ -342,6 +343,15 @@ function initEventListeners() {
     if (btnAddEndpoint) {
         btnAddEndpoint.addEventListener('click', () => {
             addEndpointToPool('');
+        });
+    }
+
+    // 端点列表搜索框
+    const endpointListSearch = document.getElementById('endpoint-list-search');
+    if (endpointListSearch) {
+        endpointListSearch.addEventListener('input', (e) => {
+            endpointSearchTerm = e.target.value;
+            renderEndpointsList();
         });
     }
 
@@ -846,12 +856,26 @@ function renderRequestChart() {
 // 渲染端点列表
 function renderEndpointsList() {
     const container = document.getElementById('endpoints-list');
-    if (currentEndpoints.length === 0) {
+
+    const searchTerm = endpointSearchTerm.trim().toLowerCase();
+    const filteredEndpoints = searchTerm
+        ? currentEndpoints.filter(ep =>
+            ep.name.toLowerCase().includes(searchTerm) ||
+            (ep.url && ep.url.toLowerCase().includes(searchTerm))
+          )
+        : currentEndpoints;
+
+    if (filteredEndpoints.length === 0 && currentEndpoints.length === 0) {
         container.innerHTML = '<p style="color: var(--text-secondary);">暂无端点，点击"添加端点"开始</p>';
         return;
     }
 
-    container.innerHTML = [...currentEndpoints]
+    if (filteredEndpoints.length === 0) {
+        container.innerHTML = '<p style="color: var(--text-secondary);">未找到匹配的端点</p>';
+        return;
+    }
+
+    container.innerHTML = [...filteredEndpoints]
         .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
         .map(ep => {
         const isUnlimited = ep.token_limit >= 999999999000;

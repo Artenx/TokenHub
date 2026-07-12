@@ -795,6 +795,15 @@ nav {
 }
 
 /* === ENDPOINT CARD === */
+.endpoint-search-wrap {
+    margin-bottom: 1rem;
+}
+
+.endpoint-search-wrap .input {
+    width: 100%;
+    max-width: 360px;
+}
+
 .endpoint-card {
     background: var(--card);
     border: 1px solid var(--border);
