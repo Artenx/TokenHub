@@ -31,6 +31,15 @@ Agent 在任务执行过程中发现的条目应遵循以下格式：
 
 ## 条目
 
+### TokenHub 38 服务器部署
+- Date: 2026-07-16
+- Context: Agent 在恢复 TokenHub Nginx 路由时发现
+- Category: 运维部署
+- Instructions:
+  - 38.76.209.172 上的 TokenHub 由 `tokenhub.service` 管理，服务监听 `127.0.0.1:8080`。
+  - Nginx 容器名为 `nginx`，使用 Docker `host` 网络，配置文件由 `/opt/lantern-notes/nginx.conf` 挂载至容器的 `/etc/nginx/conf.d/default.conf`。
+  - 保留 `/wxapi/` 到 `127.0.0.1:9090` 的独立代理；其他路径代理至 `127.0.0.1:8080`。
+
 ### 修改后自动推送到 main 分支
 - Date: 2026-07-03
 - Context: 用户明确指示，完成代码修改后直接推送到 main 分支，不再创建功能分支或 Merge Request
