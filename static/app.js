@@ -1701,6 +1701,10 @@ function switchTab(tab) {
         const isActive = btn.dataset.tab === tab;
         btn.classList.toggle('active', isActive);
         btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        if (isActive) {
+            const titleEl = document.getElementById('header-page-title');
+            if (titleEl) titleEl.textContent = btn.textContent.trim();
+        }
     });
     document.querySelectorAll('.tab-content').forEach(content => {
         content.classList.toggle('active', content.id === `tab-${tab}`);
