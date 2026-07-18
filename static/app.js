@@ -3345,8 +3345,37 @@ async function loadReplayRecords() {
     }
 }
 
+function extractStreamedText(body) {
+    const parts = [];
+    let recognized = false;
+
+    for (const line of body.split(/\r?\n/)) {
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === '[DONE]') continue;
+
+        try {
+            const event = JSON.parse(payload);
+            const openaiDelta = event.choices?.map(choice => choice.delta?.content || '').join('');
+            const responsesDelta = event.type === 'response.output_text.delta' ? event.delta : '';
+            const anthropicDelta = event.type === 'content_block_delta' ? event.delta?.text || '' : '';
+            const text = openaiDelta || responsesDelta || anthropicDelta;
+            if (text) {
+                parts.push(text);
+                recognized = true;
+            }
+        } catch (e) {
+            // Incomplete SSE events remain available through the raw response fallback.
+        }
+    }
+
+    return recognized ? parts.join('') : null;
+}
+
 function formatReplayBody(body) {
     if (!body) return '';
+    const streamedText = extractStreamedText(body);
+    if (streamedText !== null) return streamedText;
     try {
         return JSON.stringify(JSON.parse(body), null, 2);
     } catch (e) {
