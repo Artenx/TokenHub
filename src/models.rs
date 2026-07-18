@@ -402,8 +402,39 @@ pub struct ExposedApi {
     pub enabled: bool,
     /// 关联的池ID
     pub pool_id: String,
+    /// 是否启用数据回放
+    #[serde(default)]
+    pub replay_enabled: bool,
     /// 创建时间
     pub created_at: DateTime<Utc>,
+}
+
+/// 数据回放配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayConfig {
+    /// 每个接口最多保留的记录条数（默认 50）
+    #[serde(default = "default_max_records_per_api")]
+    pub max_records_per_api: usize,
+    /// 回放记录持久化文件路径（相对于配置文件目录，默认 replay_state.json）
+    #[serde(default = "default_replay_state_file")]
+    pub state_file_path: String,
+    /// 请求体/响应体截断阈值（单位 KB，默认 1024 即 1 MB）
+    #[serde(default = "default_max_body_size_kb")]
+    pub max_body_size_kb: usize,
+}
+
+fn default_max_records_per_api() -> usize { 50 }
+fn default_replay_state_file() -> String { "replay_state.json".to_string() }
+fn default_max_body_size_kb() -> usize { 1024 }
+
+impl Default for ReplayConfig {
+    fn default() -> Self {
+        Self {
+            max_records_per_api: default_max_records_per_api(),
+            state_file_path: default_replay_state_file(),
+            max_body_size_kb: default_max_body_size_kb(),
+        }
+    }
 }
 
 /// 全局配置
@@ -421,6 +452,9 @@ pub struct AppConfig {
     pub pools: Vec<Pool>,
     /// 对外暴露的API列表
     pub exposed_apis: Vec<ExposedApi>,
+    /// 数据回放配置
+    #[serde(default)]
+    pub replay: ReplayConfig,
 }
 
 impl Default for AppConfig {
@@ -432,6 +466,7 @@ impl Default for AppConfig {
             endpoints: Vec::new(),
             pools: Vec::new(),
             exposed_apis: Vec::new(),
+            replay: ReplayConfig::default(),
         }
     }
 }
@@ -488,6 +523,8 @@ pub struct ExposedApiRequest {
     pub api_key: Option<String>,
     pub enabled: Option<bool>,
     pub pool_id: String,
+    #[serde(default)]
+    pub replay_enabled: Option<bool>,
 }
 
 /// 全局配置更新请求
@@ -563,6 +600,9 @@ pub struct ExposedApiInfo {
     pub pool_id: String,
     pub pool_name: Option<String>,
     pub endpoint_count: usize,
+    pub replay_enabled: bool,
+    /// 当前已记录的回放条数
+    pub replay_record_count: usize,
 }
 
 /// 池一键测试请求
@@ -631,6 +671,37 @@ pub struct ApiCallLog {
     pub output_tokens: Option<u64>,
     /// 总 Token 数量
     pub total_tokens: Option<u64>,
+}
+
+/// 单条数据回放记录
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiReplayRecord {
+    /// 记录唯一 ID
+    pub id: String,
+    /// 所属 ExposedApi ID
+    pub api_id: String,
+    /// 发生时间
+    pub timestamp: DateTime<Utc>,
+    /// HTTP 方法
+    pub method: String,
+    /// 完整请求路径（含查询参数）
+    pub path: String,
+    /// HTTP 状态码
+    pub status_code: u16,
+    /// success / error
+    pub status: String,
+    /// 错误信息（失败时）
+    pub error_message: Option<String>,
+    /// 耗时（毫秒）
+    pub duration_ms: u64,
+    /// 请求体（UTF-8 原文；超过配置阈值时被截断）
+    pub request_body: String,
+    /// 响应体（流式响应为拼接后的完整内容；超过配置阈值时被截断）
+    pub response_body: String,
+    /// 请求体是否被截断
+    pub request_truncated: bool,
+    /// 响应体是否被截断
+    pub response_truncated: bool,
 }
 
 /// 端点延迟统计

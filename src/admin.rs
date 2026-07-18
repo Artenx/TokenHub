@@ -1025,6 +1025,71 @@ pub async fn toggle_exposed_api(
     Ok(HttpResponse::Ok().json(api))
 }
 
+/// 切换对外 API 的数据回放状态
+pub async fn toggle_exposed_api_replay(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    path: web::Path<String>,
+) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    let api = state.toggle_exposed_api_replay(&path.into_inner()).await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    Ok(HttpResponse::Ok().json(api))
+}
+
+/// 获取指定对外 API 的回放记录
+pub async fn list_replay_records(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    path: web::Path<String>,
+) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    let id = path.into_inner();
+    if state.get_exposed_api(&id).is_none() {
+        return Err(AppError::NotFound("对外API不存在".to_string()));
+    }
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "success": true,
+        "records": state.get_replay_records(&id),
+    })))
+}
+
+/// 清空指定对外 API 的回放记录
+pub async fn clear_replay_records(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    path: web::Path<String>,
+) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    let id = path.into_inner();
+    if state.get_exposed_api(&id).is_none() {
+        return Err(AppError::NotFound("对外API不存在".to_string()));
+    }
+    state.clear_replay_records(&id);
+    Ok(HttpResponse::Ok().json(serde_json::json!({ "success": true })))
+}
+
+/// 获取回放全局配置
+pub async fn get_replay_config(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    Ok(HttpResponse::Ok().json(state.replay_config.read().clone()))
+}
+
+/// 更新回放全局配置
+pub async fn update_replay_config(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    body: web::Json<ReplayConfig>,
+) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    let config = state.update_replay_config(body.into_inner()).await
+        .map_err(|e| AppError::BadRequest(e.to_string()))?;
+    Ok(HttpResponse::Ok().json(config))
+}
+
 // ========== 调用日志管理 ==========
 
 /// 获取最近 50 条 API 调用日志

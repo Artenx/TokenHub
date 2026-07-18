@@ -7,6 +7,8 @@ let currentConfig = {};
 let currentPools = [];
 let currentApis = [];
 let endpointSearchTerm = '';
+let currentReplayApiId = null;
+let currentReplayConfig = { max_records_per_api: 50, state_file_path: 'replay_state.json', max_body_size_kb: 1024 };
 
 // 初始化
 document.addEventListener('DOMContentLoaded', () => {
@@ -337,6 +339,11 @@ function initEventListeners() {
 
     // 重置所有
     document.getElementById('btn-reset-all').addEventListener('click', handleResetAll);
+
+    const replayConfigForm = document.getElementById('replay-config-form');
+    if (replayConfigForm) replayConfigForm.addEventListener('submit', saveReplayConfig);
+    document.getElementById('btn-refresh-replay')?.addEventListener('click', loadReplayRecords);
+    document.getElementById('btn-clear-replay')?.addEventListener('click', clearReplayRecords);
 
     // 添加端点按钮（端点列表页面）
     const btnAddEndpoint = document.getElementById('btn-add-endpoint');
@@ -890,6 +897,7 @@ function renderEndpointsList() {
                     <span class="endpoint-name">${escapeHtml(ep.name)}</span>
                     <div class="endpoint-status">
                         <span class="status-badge ${statusClass}">${statusText}</span>
+                        ${api.replay_enabled ? '<span class="status-badge replay-badge">回放中</span>' : ''}
                     </div>
                 </div>
                 <div class="endpoint-details">
@@ -1722,6 +1730,8 @@ function switchTab(tab) {
         loadCallLogs();
     } else if (tab === 'latency-leaderboard') {
         loadLatencyLeaderboard();
+    } else if (tab === 'settings') {
+        loadReplayConfig();
     }
 }
 
@@ -2378,6 +2388,10 @@ function renderApisList() {
                 </div>
                 <div class="endpoint-actions">
                     <button class="btn btn-small" onclick="editApi('${escapeAttr(api.id)}')">编辑</button>
+                    <button class="btn btn-small ${api.replay_enabled ? 'btn-warning' : ''}" onclick="toggleApiReplay('${escapeAttr(api.id)}')">
+                        ${api.replay_enabled ? '关闭回放' : '开启回放'}
+                    </button>
+                    <button class="btn btn-small" onclick="showReplayRecords('${escapeAttr(api.id)}')">回放记录 (${api.replay_record_count || 0})</button>
                     <button class="btn btn-small ${api.enabled ? 'btn-danger' : ''}" onclick="toggleApi('${escapeAttr(api.id)}')">
                         ${api.enabled ? '禁用' : '启用'}
                     </button>
@@ -3294,6 +3308,140 @@ async function toggleApi(id) {
         }
     } catch (e) {
         showToast('操作失败', 'error');
+    }
+}
+
+async function toggleApiReplay(id) {
+    try {
+        const res = await fetch(`${API_BASE}/exposed-apis/${id}/replay-toggle`, { method: 'POST' });
+        if (!res.ok) throw new Error('切换失败');
+        const api = await res.json();
+        showToast(api.replay_enabled ? '已开启数据回放' : '已关闭数据回放', 'success');
+        loadApisPage();
+    } catch (e) {
+        showToast('切换数据回放失败', 'error');
+    }
+}
+
+async function showReplayRecords(apiId) {
+    currentReplayApiId = apiId;
+    const api = currentApis.find(item => item.id === apiId);
+    document.getElementById('replay-modal-title').textContent = `数据回放记录${api ? ` - ${api.name}` : ''}`;
+    showModal('replay-modal');
+    await loadReplayRecords();
+}
+
+async function loadReplayRecords() {
+    if (!currentReplayApiId) return;
+    const container = document.getElementById('replay-records-list');
+    container.innerHTML = '<p style="color: var(--text-tertiary); padding: 16px;">正在加载回放记录...</p>';
+    try {
+        const res = await fetch(`${API_BASE}/exposed-apis/${currentReplayApiId}/replay-records`);
+        if (!res.ok) throw new Error('加载失败');
+        const data = await res.json();
+        renderReplayRecords(data.records || []);
+    } catch (e) {
+        container.innerHTML = '<p style="color: var(--danger); padding: 16px;">加载回放记录失败</p>';
+    }
+}
+
+function formatReplayBody(body) {
+    if (!body) return '';
+    try {
+        return JSON.stringify(JSON.parse(body), null, 2);
+    } catch (e) {
+        return body;
+    }
+}
+
+function renderReplayBody(title, body, truncated) {
+    const truncation = truncated
+        ? `<div class="replay-truncated-notice">内容超过配置阈值，仅显示前 ${currentReplayConfig.max_body_size_kb} KB</div>`
+        : '';
+    return `<section class="replay-body-section"><h4>${title}</h4>${truncation}<pre class="replay-code">${escapeHtml(formatReplayBody(body))}</pre></section>`;
+}
+
+function renderReplayRecords(records) {
+    const container = document.getElementById('replay-records-list');
+    document.getElementById('replay-record-count').textContent = `共 ${records.length} 条记录`;
+    if (records.length === 0) {
+        container.innerHTML = '<p style="color: var(--text-tertiary); padding: 16px; text-align: center;">暂无回放记录</p>';
+        return;
+    }
+    container.innerHTML = records.slice().reverse().map(record => {
+        const isError = record.status === 'error';
+        const statusColor = isError ? 'var(--danger)' : 'var(--success)';
+        const truncation = record.request_truncated || record.response_truncated
+            ? '<span class="status-badge replay-badge">已截断</span>' : '';
+        const error = record.error_message
+            ? `<div style="color: var(--danger); font-size: 0.8125rem; margin-bottom: 10px;">${escapeHtml(record.error_message)}</div>` : '';
+        return `<article class="replay-record">
+            <div class="replay-record-summary ${isError ? 'error' : ''}" onclick="toggleReplayRecord(this)">
+                <span style="color:${statusColor}; font-weight:600;">${record.status_code}</span>
+                <span>${escapeHtml(record.method)}</span>
+                <span class="replay-record-path" title="${escapeAttr(record.path)}">${escapeHtml(record.path)}</span>
+                ${truncation}
+                <span>${record.duration_ms} ms</span>
+                <span style="color:var(--text-tertiary);">${new Date(record.timestamp).toLocaleString()}</span>
+            </div>
+            <div class="replay-record-detail">
+                ${error}
+                ${renderReplayBody('请求体', record.request_body, record.request_truncated)}
+                ${renderReplayBody('响应体', record.response_body, record.response_truncated)}
+            </div>
+        </article>`;
+    }).join('');
+}
+
+function toggleReplayRecord(summary) {
+    summary.parentElement.classList.toggle('open');
+}
+
+async function clearReplayRecords() {
+    if (!currentReplayApiId || !confirm('确定清空该接口的全部回放记录吗？')) return;
+    try {
+        const res = await fetch(`${API_BASE}/exposed-apis/${currentReplayApiId}/replay-records`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('清空失败');
+        showToast('回放记录已清空', 'success');
+        await loadReplayRecords();
+        loadApisPage();
+    } catch (e) {
+        showToast('清空回放记录失败', 'error');
+    }
+}
+
+async function loadReplayConfig() {
+    try {
+        const res = await fetch(`${API_BASE}/replay-config`);
+        if (!res.ok) throw new Error('加载失败');
+        currentReplayConfig = await res.json();
+        document.getElementById('replay-state-file-path').value = currentReplayConfig.state_file_path;
+        document.getElementById('replay-max-records').value = currentReplayConfig.max_records_per_api;
+        document.getElementById('replay-max-body-kb').value = currentReplayConfig.max_body_size_kb;
+    } catch (e) {
+        showToast('加载回放设置失败', 'error');
+    }
+}
+
+async function saveReplayConfig(event) {
+    event.preventDefault();
+    const data = {
+        state_file_path: document.getElementById('replay-state-file-path').value.trim(),
+        max_records_per_api: Number(document.getElementById('replay-max-records').value),
+        max_body_size_kb: Number(document.getElementById('replay-max-body-kb').value),
+    };
+    try {
+        const res = await fetch(`${API_BASE}/replay-config`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        const response = await res.json();
+        if (!res.ok) throw new Error(response.error?.message || '保存失败');
+        currentReplayConfig = response;
+        showToast('回放设置已保存', 'success');
+    } catch (e) {
+        showToast(e.message || '保存回放设置失败', 'error');
     }
 }
 

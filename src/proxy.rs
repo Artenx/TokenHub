@@ -21,6 +21,114 @@ fn sanitize_error_body(body: &str) -> String {
     }
 }
 
+/// 将字节切片转换为 UTF-8 字符串，并按配置的阈值截断
+/// 返回 (字符串, 是否截断)
+fn capture_body(body: &[u8], max_size_kb: usize) -> (String, bool) {
+    let max_bytes = max_size_kb.saturating_mul(1024);
+    if max_bytes == 0 {
+        return (String::new(), !body.is_empty());
+    }
+    if body.len() <= max_bytes {
+        (String::from_utf8_lossy(body).into_owned(), false)
+    } else {
+        let slice = &body[..max_bytes];
+        (String::from_utf8_lossy(slice).into_owned(), true)
+    }
+}
+
+/// 构造一条 ApiReplayRecord 并写入 AppState
+#[allow(clippy::too_many_arguments)]
+fn record_replay(
+    state: &AppState,
+    api_id: &str,
+    method: &str,
+    path: &str,
+    status_code: u16,
+    status: &str,
+    error_message: Option<String>,
+    duration_ms: u64,
+    request_body: &[u8],
+    response_body: &[u8],
+) {
+    let max_kb = state.replay_config.read().max_body_size_kb;
+    let (req_body, req_trunc) = capture_body(request_body, max_kb);
+    let (resp_body, resp_trunc) = capture_body(response_body, max_kb);
+    state.add_replay_record(ApiReplayRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        api_id: api_id.to_string(),
+        timestamp: Utc::now(),
+        method: method.to_string(),
+        path: path.to_string(),
+        status_code,
+        status: status.to_string(),
+        error_message,
+        duration_ms,
+        request_body: req_body,
+        response_body: resp_body,
+        request_truncated: req_trunc,
+        response_truncated: resp_trunc,
+    });
+}
+
+/// 流式响应的有界缓冲区，保留客户端实际接收的前 N 个字节。
+struct ReplayBuffer {
+    body: Vec<u8>,
+    max_bytes: usize,
+    truncated: bool,
+}
+
+impl ReplayBuffer {
+    fn new(max_size_kb: usize) -> Self {
+        Self {
+            body: Vec::new(),
+            max_bytes: max_size_kb.saturating_mul(1024),
+            truncated: false,
+        }
+    }
+
+    fn append(&mut self, chunk: &[u8]) {
+        if self.truncated {
+            return;
+        }
+        let available = self.max_bytes.saturating_sub(self.body.len());
+        if chunk.len() > available {
+            self.body.extend_from_slice(&chunk[..available]);
+            self.truncated = true;
+        } else {
+            self.body.extend_from_slice(chunk);
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_stream_replay(
+    state: &AppState,
+    api_id: &str,
+    method: &str,
+    path: &str,
+    duration_ms: u64,
+    request_body: &[u8],
+    response: ReplayBuffer,
+) {
+    let max_kb = state.replay_config.read().max_body_size_kb;
+    let (request_body, request_truncated) = capture_body(request_body, max_kb);
+    state.add_replay_record(ApiReplayRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        api_id: api_id.to_string(),
+        timestamp: Utc::now(),
+        method: method.to_string(),
+        path: path.to_string(),
+        status_code: 200,
+        status: "success".to_string(),
+        error_message: None,
+        duration_ms,
+        request_body,
+        response_body: String::from_utf8_lossy(&response.body).into_owned(),
+        request_truncated,
+        response_truncated: response.truncated,
+    });
+}
+
 /// 已知的错误关键词（用于检测纯文本错误内容）
 const ERROR_KEYWORDS: &[&str] = &[
     "请求负载过高",
@@ -421,6 +529,7 @@ pub async fn forward_request(
     let mut last_endpoint_id: Option<String> = None;
     let mut last_endpoint_name: Option<String> = None;
     let mut last_token_usage: Option<TokenUsage> = None;
+    let mut last_replay_error: Option<(u16, String)> = None;
 
     let mut ctx = RetryContext::new(state, path)?;
     let mut result: Option<Result<HttpResponse, AppError>> = None;
@@ -475,7 +584,22 @@ pub async fn forward_request(
         };
 
         match forward_to_endpoint(state, req, &mapped_body, &endpoint, actual_path, &ctx.exposed_api.api_type).await {
-            Ok((response, token_usage)) => {
+            Ok((response, token_usage, response_body_bytes)) => {
+                // 若该接口开启了数据回放，记录完整请求/响应体
+                if ctx.exposed_api.replay_enabled {
+                    record_replay(
+                        state,
+                        &ctx.exposed_api.id,
+                        &method,
+                        path,
+                        response.status().as_u16(),
+                        "success",
+                        None,
+                        start.elapsed().as_millis() as u64,
+                        &body,
+                        &response_body_bytes,
+                    );
+                }
                 result = Some(Ok(response));
                 last_token_usage = Some(token_usage);
                 break;
@@ -484,6 +608,9 @@ pub async fn forward_request(
                 warn!("端点 {} 请求失败: {}", endpoint.config.name, error);
                 state.increment_endpoint_errors(&endpoint_id);
                 state.release_endpoint_request(&endpoint_id);
+                let status_code = error.status_code();
+                let error_body = raw_message.clone().unwrap_or_else(|| error.to_string());
+                last_replay_error = Some((status_code, error_body));
                 if !ctx.record_error(error, raw_message) {
                     result = Some(Err(AppError::Proxy("端点池所有接口均不可用，请检查后重试。".to_string())));
                     break;
@@ -494,7 +621,32 @@ pub async fn forward_request(
 
     // 保留最后一个端点直接返回的错误，用于调用日志展示
     let last_raw_error = ctx.last_raw_error.clone();
-    let result = result.unwrap_or_else(|| Err(ctx.into_final_error()));
+    let replay_api_id = ctx.exposed_api.id.clone();
+    let replay_enabled = ctx.exposed_api.replay_enabled;
+    let result = match result {
+        Some(result) => result,
+        None => Err(ctx.into_final_error()),
+    };
+
+    // 重试链路只保留最终结果，避免为每次失败尝试写入冗余回放。
+    if replay_enabled {
+        if let Err(error) = &result {
+            let (status_code, response_body) = last_replay_error
+                .unwrap_or_else(|| (error.status_code(), error.to_string()));
+            record_replay(
+                state,
+                &replay_api_id,
+                &method,
+                path,
+                status_code,
+                "error",
+                Some(response_body.clone()),
+                start.elapsed().as_millis() as u64,
+                &body,
+                response_body.as_bytes(),
+            );
+        }
+    }
 
     // 只记录命中对外 API 前缀的请求，过滤扫描器流量
     if api_prefix.is_some() {
@@ -841,17 +993,22 @@ pub async fn forward_stream_request(
         let log_start = start;
         let state_for_log = state.clone();
         let tracker_for_log = usage_tracker.clone();
+        let replay_enabled = ctx.exposed_api.replay_enabled;
+        let replay_api_id = ctx.exposed_api.id.clone();
+        let replay_request_body = body.clone();
+        let replay_max_size_kb = state.replay_config.read().max_body_size_kb;
 
         // 包裹流，在流结束后写入调用日志（含 token 用量）
         let wrapped_stream = StreamLogWriter {
             inner: raw_stream,
-            on_complete: Some(Box::new(move || {
+            replay_buffer: replay_enabled.then(|| ReplayBuffer::new(replay_max_size_kb)),
+            on_complete: Some(Box::new(move |replay_buffer| {
                 let usage = tracker_for_log.lock().unwrap().take();
                 state_for_log.add_call_log(ApiCallLog {
                     timestamp: Utc::now(),
                     client_ip: log_client_ip,
-                    method: log_method,
-                    path: log_path,
+                    method: log_method.clone(),
+                    path: log_path.clone(),
                     api_prefix: log_api_prefix,
                     endpoint_id: log_endpoint_id,
                     endpoint_name: log_endpoint_name,
@@ -863,6 +1020,17 @@ pub async fn forward_stream_request(
                     output_tokens: usage.as_ref().and_then(|u| u.output),
                     total_tokens: usage.as_ref().and_then(|u| u.total),
                 });
+                if let Some(response) = replay_buffer {
+                    record_stream_replay(
+                        state_for_log.get_ref(),
+                        &replay_api_id,
+                        &log_method,
+                        &log_path,
+                        log_start.elapsed().as_millis() as u64,
+                        &replay_request_body,
+                        response,
+                    );
+                }
             })),
         };
 
@@ -878,16 +1046,32 @@ pub async fn forward_stream_request(
 
     // 错误路径：请求未达到流式响应阶段，直接写入调用日志（无 token 数据）
     // 成功路径：返回流式响应，调用日志已在流结束回调中写入
+    let replay_api_id = ctx.exposed_api.id.clone();
+    let replay_enabled = ctx.exposed_api.replay_enabled;
     match result {
         Some(Ok(body_stream)) => Ok(body_stream),
         Some(Err(e)) => {
             let last_raw_error = ctx.last_raw_error.clone();
             let err_msg = last_raw_error.unwrap_or_else(|| e.to_string());
+            if replay_enabled {
+                record_replay(
+                    state.get_ref(),
+                    &replay_api_id,
+                    &method,
+                    path,
+                    e.status_code(),
+                    "error",
+                    Some(err_msg.clone()),
+                    start.elapsed().as_millis() as u64,
+                    &body,
+                    err_msg.as_bytes(),
+                );
+            }
             if api_prefix.is_some() {
                 state.add_call_log(ApiCallLog {
                     timestamp: Utc::now(),
                     client_ip,
-                    method,
+                    method: method.clone(),
                     path: path.to_string(),
                     api_prefix,
                     endpoint_id: last_endpoint_id,
@@ -903,7 +1087,26 @@ pub async fn forward_stream_request(
             }
             Err(e)
         }
-        None => Err(ctx.into_final_error()),
+        None => {
+            let last_raw_error = ctx.last_raw_error.clone();
+            let e = ctx.into_final_error();
+            if replay_enabled {
+                let err_msg = last_raw_error.unwrap_or_else(|| e.to_string());
+                record_replay(
+                    state.get_ref(),
+                    &replay_api_id,
+                    &method,
+                    path,
+                    e.status_code(),
+                    "error",
+                    Some(err_msg.clone()),
+                    start.elapsed().as_millis() as u64,
+                    &body,
+                    err_msg.as_bytes(),
+                );
+            }
+            Err(e)
+        }
     }
 }
 
@@ -991,7 +1194,7 @@ async fn process_upstream_success(
     start: std::time::Instant,
     path: &str,
     client_api_type: &ApiType,
-) -> Result<(HttpResponse, TokenUsage), EndpointCallError> {
+) -> Result<(HttpResponse, TokenUsage, bytes::Bytes), EndpointCallError> {
     let response_body = response.bytes().await
         .map_err(|e| AppError::Proxy(format!("读取响应失败: {}", e)))?;
     let duration_ms = start.elapsed().as_millis() as u64;
@@ -1041,7 +1244,7 @@ async fn process_upstream_success(
         }
     }
 
-    Ok((response_builder.body(final_body), token_usage))
+    Ok((response_builder.body(final_body.clone()), token_usage, final_body))
 }
 
 /// 转发请求到指定端点（非流式）
@@ -1052,7 +1255,7 @@ async fn forward_to_endpoint(
     endpoint: &EndpointState,
     path: &str,
     client_api_type: &ApiType,
-) -> Result<(HttpResponse, TokenUsage), EndpointCallError> {
+) -> Result<(HttpResponse, TokenUsage, bytes::Bytes), EndpointCallError> {
     let target_path = crate::converter::convert_path(path, client_api_type, &endpoint.config.api_type);
     let target_url = if endpoint.config.api_type == crate::models::ApiType::Custom {
         endpoint.config.url.clone()
@@ -1190,7 +1393,8 @@ fn parse_token_usage(body: &[u8], api_type: &ApiType) -> u64 {
 /// 流式响应的 Stream 包装器，在流结束后写入调用日志（含 token 用量）
 struct StreamLogWriter {
     inner: Pin<Box<dyn Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send>>,
-    on_complete: Option<Box<dyn FnOnce() + Send>>,
+    replay_buffer: Option<ReplayBuffer>,
+    on_complete: Option<Box<dyn FnOnce(Option<ReplayBuffer>) + Send>>,
 }
 
 impl Stream for StreamLogWriter {
@@ -1199,9 +1403,14 @@ impl Stream for StreamLogWriter {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
         let poll = this.inner.as_mut().poll_next(cx);
+        if let Poll::Ready(Some(Ok(chunk))) = &poll {
+            if let Some(buffer) = this.replay_buffer.as_mut() {
+                buffer.append(chunk);
+            }
+        }
         if matches!(&poll, Poll::Ready(None)) {
             if let Some(cb) = this.on_complete.take() {
-                (cb)();
+                (cb)(this.replay_buffer.take());
             }
         }
         poll
@@ -1211,7 +1420,7 @@ impl Stream for StreamLogWriter {
 impl Drop for StreamLogWriter {
     fn drop(&mut self) {
         if let Some(cb) = self.on_complete.take() {
-            (cb)();
+            (cb)(self.replay_buffer.take());
         }
     }
 }
@@ -1246,5 +1455,57 @@ mod tests {
         let body = "not json";
         let tokens = parse_token_usage(body.as_bytes(), &ApiType::OpenAI);
         assert_eq!(tokens, 0);
+    }
+
+    #[test]
+    fn test_capture_body_handles_utf8_and_truncation() {
+        let (body, truncated) = capture_body(b"hello", 1);
+        assert_eq!(body, "hello");
+        assert!(!truncated);
+
+        let input = vec![b'x'; 1025];
+        let (body, truncated) = capture_body(&input, 1);
+        assert_eq!(body.len(), 1024);
+        assert!(truncated);
+    }
+
+    #[test]
+    fn test_capture_body_handles_non_utf8() {
+        let (body, truncated) = capture_body(&[0xff, b'a'], 1);
+        assert!(body.contains('\u{fffd}'));
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn test_replay_buffer_preserves_order_and_marks_truncation() {
+        let mut buffer = ReplayBuffer::new(1);
+        buffer.append(b"first-");
+        buffer.append(b"second");
+        assert_eq!(buffer.body, b"first-second");
+        assert!(!buffer.truncated);
+
+        buffer.append(&vec![b'x'; 1024]);
+        assert_eq!(buffer.body.len(), 1024);
+        assert!(buffer.truncated);
+    }
+
+    #[actix_rt::test]
+    async fn test_stream_log_writer_collects_chunks_in_order() {
+        let completed = Arc::new(Mutex::new(None));
+        let callback_result = completed.clone();
+        let source = futures_util::stream::iter(vec![
+            Ok::<_, std::io::Error>(bytes::Bytes::from_static(b"first")),
+            Ok::<_, std::io::Error>(bytes::Bytes::from_static(b"-second")),
+        ]);
+        let mut stream = StreamLogWriter {
+            inner: Box::pin(source),
+            replay_buffer: Some(ReplayBuffer::new(1)),
+            on_complete: Some(Box::new(move |buffer| {
+                *callback_result.lock().unwrap() = buffer.map(|b| b.body);
+            })),
+        };
+
+        while stream.next().await.is_some() {}
+        assert_eq!(completed.lock().unwrap().as_deref(), Some(b"first-second".as_slice()));
     }
 }

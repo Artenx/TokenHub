@@ -225,6 +225,11 @@ async fn main() -> std::io::Result<()> {
             .route("/admin/api/exposed-apis/{id}", web::put().to(admin::update_exposed_api))
             .route("/admin/api/exposed-apis/{id}", web::delete().to(admin::delete_exposed_api))
             .route("/admin/api/exposed-apis/{id}/toggle", web::post().to(admin::toggle_exposed_api))
+            .route("/admin/api/exposed-apis/{id}/replay-toggle", web::post().to(admin::toggle_exposed_api_replay))
+            .route("/admin/api/exposed-apis/{id}/replay-records", web::get().to(admin::list_replay_records))
+            .route("/admin/api/exposed-apis/{id}/replay-records", web::delete().to(admin::clear_replay_records))
+            .route("/admin/api/replay-config", web::get().to(admin::get_replay_config))
+            .route("/admin/api/replay-config", web::put().to(admin::update_replay_config))
             // 配置
             .route("/admin/api/config", web::get().to(admin::get_config))
             .route("/admin/api/config", web::put().to(admin::update_config))

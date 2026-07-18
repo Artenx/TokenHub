@@ -53,6 +53,12 @@ pub struct AppState {
     pub rate_limits: RwLock<HashMap<String, RateLimitEntry>>,
     /// 端点延迟采样（每个端点最多保留 100 条，毫秒）
     pub endpoint_latencies: RwLock<HashMap<String, VecDeque<u64>>>,
+    /// 按 ExposedApi ID 分组的数据回放记录
+    pub replay_records: RwLock<HashMap<String, VecDeque<ApiReplayRecord>>>,
+    /// 回放记录持久化文件路径
+    pub replay_state_path: RwLock<PathBuf>,
+    /// 回放配置（从 AppConfig 提取）
+    pub replay_config: RwLock<ReplayConfig>,
 }
 
 impl AppState {
@@ -70,6 +76,8 @@ impl AppState {
             .build()?;
 
         let state_path = config_manager.config_dir().join("state.json");
+        let replay_state_path = config_manager.config_dir().join(&config.replay.state_file_path);
+        let replay_config = config.replay.clone();
 
         let app = Self {
             config: RwLock::new(config),
@@ -87,10 +95,15 @@ impl AppState {
             call_logs: RwLock::new(VecDeque::new()),
             rate_limits: RwLock::new(HashMap::new()),
             endpoint_latencies: RwLock::new(HashMap::new()),
+            replay_records: RwLock::new(HashMap::new()),
+            replay_state_path: RwLock::new(replay_state_path),
+            replay_config: RwLock::new(replay_config),
         };
 
         // 从 state.json 恢复运行时状态
         app.load_runtime_state().await;
+        // 从 replay_state.json 恢复回放记录
+        app.load_replay_state().await;
 
         Ok(app)
     }
@@ -465,6 +478,7 @@ impl AppState {
             api_key: req.api_key,
             enabled: req.enabled.unwrap_or(true),
             pool_id: req.pool_id,
+            replay_enabled: req.replay_enabled.unwrap_or(false),
             created_at: Utc::now(),
         };
 
@@ -500,6 +514,9 @@ impl AppState {
             if let Some(enabled) = req.enabled {
                 api.enabled = enabled;
             }
+            if let Some(replay) = req.replay_enabled {
+                api.replay_enabled = replay;
+            }
             api.pool_id = req.pool_id;
             config.clone()
         };
@@ -519,6 +536,9 @@ impl AppState {
         };
         self.config_manager.save(&config_to_save).await?;
 
+        // 联动清理该接口的回放记录
+        self.remove_replay_records_for_api(id);
+
         info!("已删除对外API: {}", id);
         Ok(())
     }
@@ -537,6 +557,23 @@ impl AppState {
         let api = config_to_save.exposed_apis.iter().find(|a| a.id == id).unwrap().clone();
         self.config_manager.save(&config_to_save).await?;
         info!("对外API {} 已{}", api.name, if api.enabled { "启用" } else { "禁用" });
+        Ok(api)
+    }
+
+    /// 切换对外 API 的数据回放状态
+    pub async fn toggle_exposed_api_replay(&self, id: &str) -> anyhow::Result<ExposedApi> {
+        let config_to_save = {
+            let mut config = self.config.write();
+            let api = config.exposed_apis.iter_mut().find(|a| a.id == id)
+                .ok_or_else(|| anyhow::anyhow!("对外API不存在: {}", id))?;
+            api.replay_enabled = !api.replay_enabled;
+            config.clone()
+        };
+        let api = config_to_save.exposed_apis.iter().find(|a| a.id == id)
+            .expect("已验证对外API存在")
+            .clone();
+        self.config_manager.save(&config_to_save).await?;
+        info!("已切换对外API数据回放: {} ({})", api.name, api.replay_enabled);
         Ok(api)
     }
 
@@ -630,6 +667,10 @@ impl AppState {
             let ep_count = endpoints.values()
                 .filter(|ep| ep.config.pool_ids.contains(&api.pool_id))
                 .count();
+            let replay_count = self.replay_records.read()
+                .get(&api.id)
+                .map(|v| v.len())
+                .unwrap_or(0);
 
             ExposedApiInfo {
                 id: api.id.clone(),
@@ -640,6 +681,8 @@ impl AppState {
                 pool_id: api.pool_id.clone(),
                 pool_name,
                 endpoint_count: ep_count,
+                replay_enabled: api.replay_enabled,
+                replay_record_count: replay_count,
             }
         }).collect();
 
@@ -807,6 +850,12 @@ impl AppState {
             self.dirty.store(false, Ordering::Release);
         }
         debug!("已保存运行时状态 ({})", data.len());
+
+        // 同步保存回放记录（独立文件，失败不影响主状态）
+        if let Err(e) = self.save_replay_state().await {
+            warn!("保存回放状态失败: {}", e);
+        }
+
         Ok(())
     }
 
@@ -944,6 +993,133 @@ impl AppState {
     /// 获取最近 50 条 API 调用日志
     pub fn get_call_logs(&self) -> Vec<ApiCallLog> {
         self.call_logs.read().iter().cloned().collect()
+    }
+
+    // ========== 数据回放记录管理 ==========
+
+    /// 添加一条回放记录，超过配置上限时淘汰最旧记录
+    pub fn add_replay_record(&self, record: ApiReplayRecord) {
+        let max = self.replay_config.read().max_records_per_api;
+        let mut records = self.replay_records.write();
+        let queue = records.entry(record.api_id.clone()).or_insert_with(VecDeque::new);
+        queue.push_back(record);
+        while queue.len() > max {
+            queue.pop_front();
+        }
+        self.mark_dirty();
+    }
+
+    /// 获取指定接口的回放记录（按时间正序）
+    pub fn get_replay_records(&self, api_id: &str) -> Vec<ApiReplayRecord> {
+        self.replay_records.read()
+            .get(api_id)
+            .map(|v| v.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// 清空指定接口的回放记录
+    pub fn clear_replay_records(&self, api_id: &str) {
+        let mut records = self.replay_records.write();
+        records.remove(api_id);
+        self.mark_dirty();
+    }
+
+    /// 删除接口时联动清理回放记录
+    pub fn remove_replay_records_for_api(&self, api_id: &str) {
+        let mut records = self.replay_records.write();
+        records.remove(api_id);
+        self.mark_dirty();
+    }
+
+    /// 更新回放配置，并将当前记录写入新的持久化路径。
+    pub async fn update_replay_config(&self, replay: ReplayConfig) -> anyhow::Result<ReplayConfig> {
+        if !(1..=1000).contains(&replay.max_records_per_api) {
+            anyhow::bail!("每个接口的回放记录条数应在 1 到 1000 之间");
+        }
+        if !(1..=10240).contains(&replay.max_body_size_kb) {
+            anyhow::bail!("回放内容大小上限应在 1 到 10240 KB 之间");
+        }
+        if replay.state_file_path.trim().is_empty() {
+            anyhow::bail!("回放状态文件路径不能为空");
+        }
+
+        let next_path = self.config_manager.config_dir().join(&replay.state_file_path);
+        let config_to_save = {
+            let mut config = self.config.write();
+            config.replay = replay.clone();
+            config.clone()
+        };
+        self.config_manager.save(&config_to_save).await?;
+        *self.replay_config.write() = replay.clone();
+        *self.replay_state_path.write() = next_path;
+        {
+            let mut records = self.replay_records.write();
+            for queue in records.values_mut() {
+                while queue.len() > replay.max_records_per_api {
+                    queue.pop_front();
+                }
+            }
+        }
+
+        // 路径切换后立即写入新文件，保留原文件以避免迁移失败造成记录丢失。
+        self.save_replay_state().await?;
+        self.mark_dirty();
+        Ok(replay)
+    }
+
+    /// 从 replay_state.json 加载回放记录
+    pub async fn load_replay_state(&self) {
+        let path = self.replay_state_path.read().clone();
+        if !path.exists() {
+            return;
+        }
+        let content = match tokio::fs::read_to_string(&path).await {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("读取回放状态文件失败: {}", e);
+                return;
+            }
+        };
+        let data: HashMap<String, VecDeque<ApiReplayRecord>> = match serde_json::from_str(&content) {
+            Ok(d) => d,
+            Err(e) => {
+                warn!("解析回放状态文件失败: {}", e);
+                return;
+            }
+        };
+        let max = self.replay_config.read().max_records_per_api;
+        let mut records = self.replay_records.write();
+        for (api_id, mut queue) in data {
+            while queue.len() > max {
+                queue.pop_front();
+            }
+            records.insert(api_id, queue);
+        }
+        info!("已从回放状态文件恢复 {} 个接口的回放记录", records.len());
+    }
+
+    /// 保存回放记录到 replay_state.json
+    pub async fn save_replay_state(&self) -> anyhow::Result<()> {
+        let max = self.replay_config.read().max_records_per_api;
+        let data: HashMap<String, Vec<ApiReplayRecord>> = {
+            let records = self.replay_records.read();
+            records.iter().map(|(api_id, queue)| {
+                let start = if queue.len() > max { queue.len() - max } else { 0 };
+                let slice: Vec<ApiReplayRecord> = queue.iter().skip(start).cloned().collect();
+                (api_id.clone(), slice)
+            }).filter(|(_, v)| !v.is_empty()).collect()
+        };
+
+        let json = serde_json::to_string_pretty(&data)
+            .map_err(|e| anyhow::anyhow!("序列化回放状态失败: {}", e))?;
+        let path = self.replay_state_path.read().clone();
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await.ok();
+        }
+        tokio::fs::write(&path, json).await
+            .map_err(|e| anyhow::anyhow!("写入回放状态文件失败: {}", e))?;
+        debug!("已保存回放状态 ({} 个接口)", data.len());
+        Ok(())
     }
 
     // ========== IP 限流 ==========
@@ -1248,5 +1424,169 @@ impl AppState {
         // 尝试从缓存中匹配，返回端点模型列表中的实际名称
         self.match_model_name(&endpoint.config.id, client_model)
             .unwrap_or_else(|| client_model.to_string())
+    }
+}
+
+#[cfg(test)]
+mod replay_tests {
+    use super::*;
+    use chrono::Utc;
+    use tempfile::TempDir;
+
+    fn make_record(api_id: &str, idx: usize) -> ApiReplayRecord {
+        ApiReplayRecord {
+            id: format!("rec-{}", idx),
+            api_id: api_id.to_string(),
+            timestamp: Utc::now(),
+            method: "POST".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            status_code: 200,
+            status: "success".to_string(),
+            error_message: None,
+            duration_ms: 100,
+            request_body: format!("{{\"idx\":{}}}", idx),
+            response_body: format!("{{\"ok\":{}}}", idx),
+            request_truncated: false,
+            response_truncated: false,
+        }
+    }
+
+    async fn make_state(tmp: &TempDir, max_records: usize) -> AppState {
+        let config_path = tmp.path().join("config.toml");
+        let config_path_str = config_path.to_str().unwrap().to_string();
+        let manager = crate::config::ConfigManager::new(Some(&config_path_str));
+        let mut config = AppConfig::default();
+        config.replay.max_records_per_api = max_records;
+        config.replay.state_file_path = "replay_state.json".to_string();
+        manager.save(&config).await.unwrap();
+        AppState::new(manager).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_add_replay_record_evicts_oldest() {
+        let tmp = TempDir::new().unwrap();
+        let state = make_state(&tmp, 50).await;
+        for i in 0..60 {
+            state.add_replay_record(make_record("api-1", i));
+        }
+        let records = state.get_replay_records("api-1");
+        assert_eq!(records.len(), 50);
+        assert_eq!(records[0].id, "rec-10");
+        assert_eq!(records[49].id, "rec-59");
+    }
+
+    #[tokio::test]
+    async fn test_replay_records_isolated_per_api() {
+        let tmp = TempDir::new().unwrap();
+        let state = make_state(&tmp, 10).await;
+        state.add_replay_record(make_record("api-1", 1));
+        state.add_replay_record(make_record("api-2", 2));
+        assert_eq!(state.get_replay_records("api-1").len(), 1);
+        assert_eq!(state.get_replay_records("api-2").len(), 1);
+        assert_eq!(state.get_replay_records("api-3").len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_clear_replay_records() {
+        let tmp = TempDir::new().unwrap();
+        let state = make_state(&tmp, 10).await;
+        state.add_replay_record(make_record("api-1", 1));
+        state.clear_replay_records("api-1");
+        assert_eq!(state.get_replay_records("api-1").len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_save_and_load_replay_state() {
+        let tmp = TempDir::new().unwrap();
+        {
+            let state = make_state(&tmp, 5).await;
+            for i in 0..8 {
+                state.add_replay_record(make_record("api-1", i));
+            }
+            state.save_replay_state().await.unwrap();
+        }
+        // 重新加载
+        let state2 = make_state(&tmp, 5).await;
+        let records = state2.get_replay_records("api-1");
+        assert_eq!(records.len(), 5);
+        assert_eq!(records[0].id, "rec-3");
+        assert_eq!(records[4].id, "rec-7");
+    }
+
+    #[tokio::test]
+    async fn test_exposed_api_replay_enabled_default_false() {
+        let json = r#"{
+            "id":"a1","name":"test","prefix":"/v1",
+            "api_type":"openai","api_key":null,
+            "enabled":true,"pool_id":"p1",
+            "created_at":"2026-07-18T00:00:00Z"
+        }"#;
+        let api: ExposedApi = serde_json::from_str(json).unwrap();
+        assert!(!api.replay_enabled);
+    }
+
+    #[tokio::test]
+    async fn test_replay_config_defaults() {
+        let toml_str = r#"
+listen_addr = "0.0.0.0"
+listen_port = 8080
+admin_password = "x"
+endpoints = []
+pools = []
+exposed_apis = []
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.replay.max_records_per_api, 50);
+        assert_eq!(config.replay.state_file_path, "replay_state.json");
+        assert_eq!(config.replay.max_body_size_kb, 1024);
+    }
+
+    #[tokio::test]
+    async fn test_load_replay_state_respects_new_max() {
+        let tmp = TempDir::new().unwrap();
+        // 先用 max=10 写入 10 条
+        {
+            let state = make_state(&tmp, 10).await;
+            for i in 0..10 {
+                state.add_replay_record(make_record("api-1", i));
+            }
+            state.save_replay_state().await.unwrap();
+        }
+        // 用 max=3 重启，加载后应裁剪到 3 条
+        let state2 = make_state(&tmp, 3).await;
+        let records = state2.get_replay_records("api-1");
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0].id, "rec-7");
+    }
+
+    #[tokio::test]
+    async fn test_update_replay_config_trims_records_and_writes_new_path() {
+        let tmp = TempDir::new().unwrap();
+        let state = make_state(&tmp, 10).await;
+        for i in 0..5 {
+            state.add_replay_record(make_record("api-1", i));
+        }
+        let next = ReplayConfig {
+            max_records_per_api: 2,
+            state_file_path: "nested/replay.json".to_string(),
+            max_body_size_kb: 2048,
+        };
+        state.update_replay_config(next.clone()).await.unwrap();
+        assert_eq!(state.get_replay_records("api-1").len(), 2);
+        assert_eq!(state.replay_config.read().max_records_per_api, 2);
+        assert_eq!(state.replay_state_path.read().file_name().unwrap(), "replay.json");
+        assert!(tmp.path().join("nested/replay.json").exists());
+    }
+
+    #[tokio::test]
+    async fn test_update_replay_config_validates_bounds() {
+        let tmp = TempDir::new().unwrap();
+        let state = make_state(&tmp, 10).await;
+        let invalid = ReplayConfig {
+            max_records_per_api: 0,
+            state_file_path: "replay.json".to_string(),
+            max_body_size_kb: 1024,
+        };
+        assert!(state.update_replay_config(invalid).await.is_err());
     }
 }

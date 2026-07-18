@@ -334,6 +334,25 @@
                                 <button id="btn-change-password-settings" class="btn btn-secondary">修改密码</button>
                                 <button id="btn-reset-all" class="btn btn-danger">重置所有端点 Token</button>
                             </div>
+                            <div style="margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); max-width: 620px;">
+                                <h3 style="font-size: 1rem; margin-bottom: 12px;">数据回放设置</h3>
+                                <form id="replay-config-form">
+                                    <div class="form-group">
+                                        <label for="replay-state-file-path">回放记录文件路径</label>
+                                        <input id="replay-state-file-path" type="text" placeholder="replay_state.json">
+                                        <small>相对于配置文件目录。切换路径后，当前回放记录会同步写入新文件。</small>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="replay-max-records">每个接口保留记录数</label>
+                                        <input id="replay-max-records" type="number" min="1" max="1000" value="50">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="replay-max-body-kb">单条请求或响应最大保存大小（KB）</label>
+                                        <input id="replay-max-body-kb" type="number" min="1" max="10240" value="1024">
+                                    </div>
+                                    <button type="submit" class="btn btn-primary">保存回放设置</button>
+                                </form>
+                            </div>
                         </div>
                     </div>
                 </main>
@@ -713,6 +732,25 @@
                         <button type="button" class="btn modal-close">关闭</button>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- 数据回放记录模态框 -->
+        <div id="replay-modal" class="modal" style="display:none; z-index: 1100;">
+            <div class="modal-content" style="max-width: 1000px; max-height: 88vh; display: flex; flex-direction: column;">
+                <div class="modal-header">
+                    <h2 id="replay-modal-title">数据回放记录</h2>
+                    <button class="modal-close">&times;</button>
+                </div>
+                <div class="replay-sensitive-notice">回放内容可能包含 API Key 等敏感信息，请妥善保管。</div>
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin: 12px 0;">
+                    <span id="replay-record-count" style="color: var(--text-secondary); font-size: 0.875rem;"></span>
+                    <div style="display:flex; gap:8px;">
+                        <button id="btn-refresh-replay" type="button" class="btn btn-small">刷新</button>
+                        <button id="btn-clear-replay" type="button" class="btn btn-small btn-danger">清空回放</button>
+                    </div>
+                </div>
+                <div id="replay-records-list" class="replay-records-list"></div>
             </div>
         </div>
 

@@ -1,0 +1,163 @@
+# 需求实施计划
+
+- [ ] 1. 扩展数据模型与配置结构
+  - [ ] 1.1 在 `src/models.rs` 中新增 `ReplayConfig` 结构体
+    - 包含 `max_records_per_api`（默认 50）、`state_file_path`（默认 `replay_state.json`）、`max_body_size_kb`（默认 1024）三个字段
+    - 为每个字段添加 `#[serde(default = ...)]` 并编写对应的默认值函数
+    - 实现 `Default` trait
+    - 引用需求：Requirement 3.6 / 3.7 / 3.8 / 3.9
+  - [ ] 1.2 在 `AppConfig` 中嵌入 `replay: ReplayConfig`
+    - 添加 `#[serde(default)]` 确保旧配置兼容
+    - 引用需求：Requirement 3.9
+  - [ ] 1.3 在 `ExposedApi` 中新增 `replay_enabled: bool`
+    - 添加 `#[serde(default)]` 确保旧配置兼容
+    - 引用需求：Requirement 1.1 / 1.4
+  - [ ] 1.4 在 `ExposedApiRequest` 中新增 `replay_enabled: Option<bool>`
+    - 引用需求：Requirement 1.1
+  - [ ] 1.5 在 `ExposedApiInfo` 中新增 `replay_enabled: bool` 和 `replay_record_count: usize`
+    - 引用需求：Requirement 1.3 / 4.1
+  - [ ] 1.6 新增 `ApiReplayRecord` 结构体
+    - 包含 id、api_id、timestamp、method、path、status_code、status、error_message、duration_ms、request_body、response_body、request_truncated、response_truncated
+    - 引用需求：Requirement 2.1 / 2.2 / 2.3 / 2.4
+
+- [ ] 2. 实现回放状态存储与持久化
+  - [ ] 2.1 在 `AppState` 中新增 `replay_records`、`replay_state_path`、`replay_config` 字段
+    - `replay_records: RwLock<HashMap<String, VecDeque<ApiReplayRecord>>>`
+    - `replay_state_path: PathBuf`（由 `config_manager.config_dir()` + `replay.state_file_path` 解析）
+    - `replay_config: RwLock<ReplayConfig>`
+    - 引用需求：Requirement 3.1 / 3.7
+  - [ ] 2.2 实现 `add_replay_record` 方法
+    - 按 `api_id` 分组追加记录
+    - 超过 `max_records_per_api` 时淘汰队首
+    - 标记 `dirty` 触发持久化
+    - 引用需求：Requirement 3.2 / CP-1
+  - [ ] 2.3 实现 `get_replay_records`、`clear_replay_records`、`remove_replay_records_for_api` 方法
+    - 引用需求：Requirement 3.3 / 3.5 / 4.1
+  - [ ] 2.4 实现 `save_replay_state` 和 `load_replay_state` 方法
+    - `save_replay_state`：序列化到 `replay_state_path`，仅保留每接口最新 `max_records_per_api` 条
+    - `load_replay_state`：启动时恢复，恢复后校验条数上限
+    - 引用需求：Requirement 3.4 / 3.10 / CP-8
+  - [ ] 2.5 在 `save_runtime_state` 中集成 `save_replay_state` 调用
+    - 在保存 `state.json` 后异步调用
+    - 引用需求：Requirement 3.4
+  - [ ] 2.6 在 `AppState::new` 中初始化回放相关字段并加载回放状态
+    - 从配置中解析 `replay_state_path`
+    - 调用 `load_replay_state`
+    - 引用需求：Requirement 3.4 / 3.7
+  - [ ] 2.7 为状态存储编写单元测试
+    - 测试容量淘汰逻辑（连续写入 60 条，断言剩余 50 条）
+    - 测试 `save_replay_state` / `load_replay_state` 往返一致性
+    - 测试 `ExposedApi` 反序列化时缺失 `replay_enabled` 字段默认为 false
+    - 引用需求：CP-1 / CP-8
+
+- [ ] 3. 实现代理链路回放捕获
+  - [ ] 3.1 在 `src/proxy.rs` 中新增 `capture_body` 辅助函数
+    - 将字节切片转换为 UTF-8 字符串（`String::from_utf8_lossy`）
+    - 按 `max_body_size_kb * 1024` 字节截断
+    - 返回 `(String, bool)` 标记是否截断
+    - 引用需求：Requirement 2.4 / 3.8
+  - [ ] 3.2 新增 `record_replay` 辅助函数
+    - 构造 `ApiReplayRecord` 并调用 `state.add_replay_record`
+    - 从 `state.replay_config` 读取当前配置
+    - 引用需求：Requirement 2.1 / 2.3
+  - [ ] 3.3 修改非流式路径 `forward_to_endpoint` 返回最终响应体字节
+    - 在返回 `HttpResponse` 前，将 `final_body.clone()` 一并返回
+    - 引用需求：Requirement 2.1 / CP-4
+  - [ ] 3.4 在非流式 `forward_request` 中集成回放记录
+    - 在现有写入 `ApiCallLog` 的位置后，判断 `ctx.exposed_api.replay_enabled`
+    - 成功时记录请求体（原始 `body`）和响应体（`final_body`）
+    - 失败时记录请求体和错误信息（`last_raw_error` 或 `e.to_string()`）
+    - 引用需求：Requirement 2.1 / 2.3 / 2.5 / CP-3 / CP-4
+  - [ ] 3.5 改造 `StreamLogWriter` 支持响应体缓冲
+    - 新增 `body_buffer: Arc<Mutex<Vec<u8>>>` 字段
+    - 在 `poll_next` 中每次返回 chunk 前追加到 buffer
+    - 达到 `max_body_size_kb * 1024` 字节后停止追加并标记截断
+    - 引用需求：Requirement 2.2 / 2.4 / CP-5
+  - [ ] 3.6 在流式 `forward_stream_request` 中集成回放记录
+    - 在 `on_complete` 回调中，除 `add_call_log` 外，判断 `replay_enabled` 并调用 `record_replay`
+    - `request_body` 为原始 `body`，`response_body` 为 buffer 内容
+    - 错误路径（未进入流式阶段）同样记录错误信息
+    - 引用需求：Requirement 2.2 / 2.3 / CP-5
+  - [ ] 3.7 为捕获逻辑编写单元测试
+    - 测试 `capture_body` 的 UTF-8 / 非 UTF-8 / 空 / 边界长度处理
+    - 测试 `StreamLogWriter` 缓冲拼接顺序与截断标记
+    - 引用需求：CP-5
+
+- [ ] 4. 实现管理 API 接口
+  - [ ] 4.1 实现 `GET /admin/api/exposed-apis/{id}/replay-records`
+    - 返回该接口回放记录列表（JSON 数组）
+    - 引用需求：Requirement 4.1 / 5.1
+  - [ ] 4.2 实现 `DELETE /admin/api/exposed-apis/{id}/replay-records`
+    - 清空该接口回放记录
+    - 引用需求：Requirement 3.5 / 5.1
+  - [ ] 4.3 实现 `POST /admin/api/exposed-apis/{id}/replay-toggle`
+    - 切换 `replay_enabled`，返回最新状态
+    - 引用需求：Requirement 1.1 / 5.1
+  - [ ] 4.4 实现 `GET /admin/api/replay-config`
+    - 返回当前回放配置
+    - 引用需求：Requirement 3.6 / 3.7 / 3.8
+  - [ ] 4.5 实现 `PUT /admin/api/replay-config`
+    - 校验参数范围（`max_records_per_api` 1–1000，`max_body_size_kb` 1–10240）
+    - 更新 `AppConfig.replay` 并保存到 `config.toml`
+    - 同步更新 `AppState.replay_config` 与 `AppState.replay_state_path`
+    - 若 `state_file_path` 变更，迁移现有记录到新路径
+    - 引用需求：Requirement 3.6 / 3.7 / 3.8 / CP-9 / CP-10
+  - [ ] 4.6 在 `main.rs` 中注册新路由
+    - 引用需求：Requirement 5.1
+  - [ ] 4.7 在 `update_exposed_api` 中处理 `replay_enabled` 字段更新
+    - 引用需求：Requirement 1.1
+  - [ ] 4.8 为管理 API 编写集成测试
+    - 测试未认证访问返回 401
+    - 测试 `replay-toggle` 切换行为
+    - 测试 `PUT /replay-config` 参数校验与配置持久化
+    - 引用需求：Requirement 5.1 / CP-9
+
+- [ ] 5. 实现前端接口管理页面
+  - [ ] 5.1 在接口卡片上增加「回放中」状态标识
+    - 当 `api.replay_enabled == true` 时显示醒目 badge
+    - 引用需求：Requirement 1.3
+  - [ ] 5.2 在接口卡片操作区增加「开启回放 / 关闭回放」按钮
+    - 调用 `POST .../replay-toggle`，成功后刷新列表
+    - 引用需求：Requirement 1.1
+  - [ ] 5.3 在接口卡片操作区增加「回放记录」按钮
+    - 附带 `replay_record_count` 徽标
+    - 点击打开回放记录弹窗
+    - 引用需求：Requirement 4.1
+  - [ ] 5.4 实现回放记录弹窗
+    - 展示接口名称、记录条数、「刷新」「清空回放」按钮
+    - 列表按时间倒序展示：时间、方法、路径、状态码（成功绿色/失败红色）、耗时、截断标记
+    - 空列表显示「暂无回放记录」占位提示
+    - 引用需求：Requirement 4.1 / 4.2 / 4.5
+  - [ ] 5.5 实现回放记录详情展开
+    - 点击列表项展开，分「请求体」「响应体」两个区块
+    - JSON 内容使用 `JSON.stringify(obj, null, 2)` 美化渲染
+    - 非 JSON 内容以 `<pre>` 原样展示
+    - 截断标记为 true 时显示黄色提示条「内容超过配置阈值，仅显示前 N KB」
+    - 失败调用在列表项上以错误样式标识
+    - 引用需求：Requirement 4.3 / 4.4 / 4.5
+  - [ ] 5.6 在弹窗顶部显示敏感信息提示
+    - 「回放内容可能包含 API Key 等敏感信息，请妥善保管」
+    - 引用需求：Requirement 5.2
+  - [ ] 5.7 实现「清空回放」功能
+    - `confirm()` 二次确认后调用 `DELETE .../replay-records`
+    - 引用需求：Requirement 3.5
+  - [ ] 5.8 在系统设置页面增加回放配置编辑
+    - 展示当前 `max_records_per_api`、`state_file_path`、`max_body_size_kb`
+    - 提供编辑表单，调用 `PUT /admin/api/replay-config` 保存
+    - 引用需求：Requirement 3.6 / 3.7 / 3.8
+  - [ ] 5.9 前端样式优化
+    - 新增回放相关 CSS 样式（badge、弹窗、JSON 美化区域、提示条）
+    - 引用需求：Requirement 4.3 / 4.4 / 5.2
+
+- [ ] 6. 检查点 - 确保编译通过
+  - 运行 `cargo build` 确保无编译错误
+  - 运行 `cargo test` 确保既有测试通过
+  - 如有疑问请询问用户
+
+- [ ] 7. 端到端验证
+  - [ ] 7.1 启动服务，在管理后台开启某接口回放
+  - [ ] 7.2 通过 `curl` 发送非流式请求，验证回放记录正确捕获
+  - [ ] 7.3 通过 `curl` 发送流式请求，验证回放记录正确捕获
+  - [ ] 7.4 验证关闭回放后不再产生新记录
+  - [ ] 7.5 验证重启服务后回放记录正确恢复
+  - [ ] 7.6 验证修改配置后新配置生效
