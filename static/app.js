@@ -206,6 +206,8 @@ function initEventListeners() {
     }
     document.getElementById('btn-refresh-benchmarks')?.addEventListener('click', loadModelBenchmarks);
     document.getElementById('benchmark-form')?.addEventListener('submit', createModelBenchmark);
+    document.getElementById('benchmark-endpoints')?.addEventListener('change', updateBenchmarkCandidateModels);
+    document.getElementById('benchmark-judge-endpoint')?.addEventListener('change', updateBenchmarkJudgeModels);
     document.querySelectorAll('.benchmark-tab').forEach(btn => btn.addEventListener('click', () => switchBenchmarkView(btn.dataset.benchmarkView)));
 
     // 密码表单
@@ -1765,24 +1767,52 @@ async function loadModelBenchmarks() {
     const container = document.getElementById('benchmark-list');
     if (!container) return;
     try {
-        const [benchmarkResponse, statsResponse] = await Promise.all([fetch(`${API_BASE}/model-benchmarks`), fetch(`${API_BASE}/stats`)]);
-        if (!benchmarkResponse.ok || !statsResponse.ok) throw new Error('加载失败');
+        const benchmarkResponse = await fetch(`${API_BASE}/model-benchmarks`);
+        if (!benchmarkResponse.ok) throw new Error('加载失败');
         const runs = await benchmarkResponse.json();
-        const stats = await statsResponse.json();
-        currentEndpoints = stats.endpoints || [];
-        populateBenchmarkEndpointOptions();
+        await populateBenchmarkEndpointOptions();
         container.innerHTML = runs.length ? runs.slice().reverse().map(run => `<article class="benchmark-run"><div class="benchmark-run-header"><span class="status-badge ${benchmarkStatusClass(run.status)}">${benchmarkStatusText(run.status)}</span><strong>${escapeHtml(run.model)}</strong><span>${run.endpoint_ids.length} 个端点</span><span>${run.cases.length} 条样本</span><span>${new Date(run.created_at).toLocaleString()}</span></div><div class="benchmark-run-actions"><button class="btn btn-small" onclick="showModelBenchmark('${escapeAttr(run.id)}')">查看结果</button>${['queued','running'].includes(run.status) ? `<button class="btn btn-small btn-danger" onclick="cancelModelBenchmark('${escapeAttr(run.id)}')">取消</button>` : ''}</div></article>`).join('') : '<p class="benchmark-empty">暂无评测任务</p>';
     } catch { container.innerHTML = '<p style="color:var(--danger);">加载评测任务失败</p>'; }
 }
 
-function populateBenchmarkEndpointOptions() {
+async function populateBenchmarkEndpointOptions() {
     const candidateSelect = document.getElementById('benchmark-endpoints');
     const judgeSelect = document.getElementById('benchmark-judge-endpoint');
     if (!candidateSelect || !judgeSelect) return;
-    const candidates = currentEndpoints.filter(ep => ep.enabled);
-    const options = candidates.map(ep => `<option value="${escapeAttr(ep.id)}">${escapeHtml(ep.name)} · ${escapeHtml(ep.api_type)}</option>`).join('');
+    const response = await fetch(`${API_BASE}/model-benchmarks/candidates`);
+    if (!response.ok) throw new Error('加载端点模型失败');
+    const candidates = (await response.json()).filter(endpoint => endpoint.enabled);
+    const selectedCandidates = new Set(Array.from(candidateSelect.selectedOptions).map(option => option.value));
+    const selectedJudge = judgeSelect.value;
+    const options = candidates.map(endpoint => `<option value="${escapeAttr(endpoint.id)}" ${selectedCandidates.has(endpoint.id) ? 'selected' : ''}>${escapeHtml(endpoint.name)}${endpoint.models.length ? ` · ${endpoint.models.length} 个模型` : ' · 未发现模型'}</option>`).join('');
     candidateSelect.innerHTML = options;
-    judgeSelect.innerHTML = options;
+    judgeSelect.innerHTML = candidates.map(endpoint => `<option value="${escapeAttr(endpoint.id)}" ${endpoint.id === selectedJudge ? 'selected' : ''}>${escapeHtml(endpoint.name)}${endpoint.models.length ? ` · ${endpoint.models.length} 个模型` : ' · 未发现模型'}</option>`).join('');
+    candidateSelect.dataset.models = JSON.stringify(candidates);
+    judgeSelect.dataset.models = JSON.stringify(candidates);
+    updateBenchmarkCandidateModels();
+    updateBenchmarkJudgeModels();
+}
+
+function updateBenchmarkCandidateModels() {
+    const endpointSelect = document.getElementById('benchmark-endpoints');
+    const modelSelect = document.getElementById('benchmark-model');
+    const candidates = JSON.parse(endpointSelect.dataset.models || '[]');
+    const selected = Array.from(endpointSelect.selectedOptions).map(option => option.value);
+    const selectedModel = modelSelect.value;
+    const modelSets = selected.map(id => new Set(candidates.find(endpoint => endpoint.id === id)?.models || []));
+    const models = modelSets.length ? [...modelSets[0]].filter(model => modelSets.every(set => set.has(model))).sort() : [];
+    modelSelect.disabled = !models.length;
+    modelSelect.innerHTML = models.length ? `<option value="">选择被测模型</option>${models.map(model => `<option value="${escapeAttr(model)}" ${model === selectedModel ? 'selected' : ''}>${escapeHtml(model)}</option>`).join('')}` : '<option value="">所选端点没有共同模型</option>';
+}
+
+function updateBenchmarkJudgeModels() {
+    const endpointSelect = document.getElementById('benchmark-judge-endpoint');
+    const modelSelect = document.getElementById('benchmark-judge-model');
+    const candidates = JSON.parse(endpointSelect.dataset.models || '[]');
+    const models = (candidates.find(endpoint => endpoint.id === endpointSelect.value)?.models || []).slice().sort();
+    const selectedModel = modelSelect.value;
+    modelSelect.disabled = !models.length;
+    modelSelect.innerHTML = models.length ? `<option value="">选择评审模型</option>${models.map(model => `<option value="${escapeAttr(model)}" ${model === selectedModel ? 'selected' : ''}>${escapeHtml(model)}</option>`).join('')}` : '<option value="">该端点没有可用模型</option>';
 }
 
 function benchmarkStatusClass(status) {

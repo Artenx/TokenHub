@@ -1176,10 +1176,21 @@ pub async fn cancel_model_benchmark(state: web::Data<AppState>, req: HttpRequest
 pub async fn list_model_benchmark_candidates(state: web::Data<AppState>, req: HttpRequest, query: web::Query<std::collections::HashMap<String, String>>) -> Result<HttpResponse, AppError> {
     check_admin_auth(&req, state.get_ref())?;
     let model = query.get("model").cloned().unwrap_or_default();
-    let candidates: Vec<_> = state.endpoints.read().values().map(|endpoint| {
-        let models = state.get_cached_models(&endpoint.config.id).unwrap_or_default();
-        json!({"id": endpoint.config.id, "name": endpoint.config.name, "enabled": endpoint.config.enabled, "supports_model": model.is_empty() || models.is_empty() || models.iter().any(|candidate| candidate == &model)})
+    let endpoints: Vec<_> = state.endpoints.read().values().map(|endpoint| {
+        (endpoint.config.id.clone(), endpoint.config.name.clone(), endpoint.config.enabled)
     }).collect();
+    let mut candidates = Vec::with_capacity(endpoints.len());
+
+    for (id, name, enabled) in endpoints {
+        let mut models = match state.get_cached_models(&id) {
+            Some(models) => models,
+            None => state.fetch_endpoint_models(&id).await.unwrap_or_default(),
+        };
+        models.sort();
+        models.dedup();
+        let supports_model = model.is_empty() || models.iter().any(|candidate| candidate == &model);
+        candidates.push(json!({"id": id, "name": name, "enabled": enabled, "models": models, "supports_model": supports_model}));
+    }
     Ok(HttpResponse::Ok().json(candidates))
 }
 
