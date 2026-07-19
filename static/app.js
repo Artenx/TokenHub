@@ -1772,7 +1772,10 @@ async function loadModelBenchmarks() {
         if (!benchmarkResponse.ok) throw new Error('加载失败');
         const runs = await benchmarkResponse.json();
         await populateBenchmarkEndpointOptions();
-        container.innerHTML = runs.length ? runs.slice().reverse().map(run => { const targets = run.targets?.length ? run.targets : run.endpoint_ids.map(endpoint_id => ({ endpoint_id, model: run.model })); return `<article class="benchmark-run"><div class="benchmark-run-header"><span class="status-badge ${benchmarkStatusClass(run.status)}">${benchmarkStatusText(run.status)}</span><strong>${targets.map(target => escapeHtml(target.model)).join('、')}</strong><span>${targets.length} 个组合</span><span>${run.cases.length} 条样本</span><span>${new Date(run.created_at).toLocaleString()}</span></div><div class="benchmark-run-actions"><button class="btn btn-small" onclick="showModelBenchmark('${escapeAttr(run.id)}')">查看结果</button>${['queued','running'].includes(run.status) ? `<button class="btn btn-small btn-danger" onclick="cancelModelBenchmark('${escapeAttr(run.id)}')">取消</button>` : ''}</div></article>`; }).join('') : '<p class="benchmark-empty">暂无评测任务</p>';
+        container.innerHTML = runs.length ? runs.slice().reverse().map(run => {
+            const targets = run.targets?.length ? run.targets : run.endpoint_ids.map(endpoint_id => ({ endpoint_id, model: run.model }));
+            return `<article class="benchmark-run"><div class="benchmark-run-meta"><div class="benchmark-run-header"><span class="status-badge ${benchmarkStatusClass(run.status)}">${benchmarkStatusText(run.status)}</span><span>${targets.length} 个组合</span><span>${run.cases.length} 条样本</span><span>${new Date(run.created_at).toLocaleString()}</span></div><div class="benchmark-run-targets">${targets.map(target => `<span>${escapeHtml(target.model)}</span>`).join('')}</div></div><div class="benchmark-run-actions"><button class="btn btn-small" onclick="showModelBenchmark('${escapeAttr(run.id)}')">查看结果</button>${['queued','running'].includes(run.status) ? `<button class="btn btn-small btn-danger" onclick="cancelModelBenchmark('${escapeAttr(run.id)}')">取消</button>` : ''}</div></article>`;
+        }).join('') : '<p class="benchmark-empty">暂无评测任务</p>';
     } catch { container.innerHTML = '<p style="color:var(--danger);">加载评测任务失败</p>'; }
 }
 
@@ -1846,6 +1849,13 @@ function benchmarkStatusText(status) {
     return { completed: '已完成', failed: '失败', cancelled: '已取消', running: '执行中', queued: '排队中' }[status] || status;
 }
 
+function benchmarkJudgeStatus(judge) {
+    if (!judge) return { text: '无评审', className: 'missing' };
+    if (judge.status === 'success') return { text: '评审成功', className: 'success' };
+    if (judge.status === 'judge_parse_error') return { text: '评审解析失败', className: 'error' };
+    return { text: '评审失败', className: 'error' };
+}
+
 async function showModelBenchmark(id) {
     const detail = document.getElementById('benchmark-detail');
     try {
@@ -1853,12 +1863,16 @@ async function showModelBenchmark(id) {
         if (!response.ok) throw new Error('加载失败');
         const data = await response.json();
         const rows = data.summaries.map(summary => `<tr><td>${escapeHtml(summary.endpoint_name)}</td><td>${escapeHtml(summary.model)}</td><td>${summary.success_rate.toFixed(1)}%</td><td>${summary.median_ttft_ms ?? '-'}</td><td>${summary.median_duration_ms ?? '-'}</td><td>${summary.average_total_tokens ?? '-'}</td><td>${summary.average_score?.toFixed(1) ?? '-'}</td></tr>`).join('');
-        const attempts = data.run.attempts.map(attempt => {
-            const judge = data.run.judge_results.find(result => result.attempt_id === attempt.id);
-            const judgeLine = judge && judge.score != null ? `<div class="benchmark-judge">评分 ${judge.score.toFixed(1)} · 准确性 ${judge.accuracy?.toFixed(1) ?? '-'} · 完整性 ${judge.completeness?.toFixed(1) ?? '-'} · 指令遵循 ${judge.instruction_following?.toFixed(1) ?? '-'} · 表达 ${judge.writing_quality?.toFixed(1) ?? '-'}</div>` : '';
-            return `<details class="benchmark-attempt"><summary><span>${escapeHtml(attempt.endpoint_name)} · ${escapeHtml(attempt.model)}</span><span class="status-badge ${attempt.status === 'success' ? 'active' : 'disabled'}">${escapeHtml(attempt.status)}</span><span>${attempt.duration_ms}ms</span></summary><div class="benchmark-attempt-body">${judgeLine}<pre class="replay-code">${escapeHtml(attempt.output || attempt.error_message || '')}</pre></div></details>`;
+        const groups = data.run.cases.map(testCase => {
+            const cards = data.run.attempts.filter(attempt => attempt.case_id === testCase.id).map(attempt => {
+                const judge = data.run.judge_results.find(result => result.attempt_id === attempt.id);
+                const judgeStatus = benchmarkJudgeStatus(judge);
+                const judgeLine = judge ? `<div class="benchmark-judge ${judgeStatus.className}"><span>${judgeStatus.text}</span>${judge.score != null ? `<strong>${judge.score.toFixed(1)}</strong><span>准确性 ${judge.accuracy?.toFixed(1) ?? '-'} · 完整性 ${judge.completeness?.toFixed(1) ?? '-'} · 指令遵循 ${judge.instruction_following?.toFixed(1) ?? '-'} · 表达 ${judge.writing_quality?.toFixed(1) ?? '-'}</span>` : ''}${judge.reason ? `<p>${escapeHtml(judge.reason)}</p>` : ''}</div>` : '';
+                return `<article class="benchmark-output-card"><div class="benchmark-output-header"><strong>${escapeHtml(attempt.endpoint_name)}</strong><span>${escapeHtml(attempt.model)}</span><span class="status-badge ${attempt.status === 'success' ? 'active' : 'disabled'}">${escapeHtml(attempt.status)}</span><span>${attempt.duration_ms}ms</span></div>${judgeLine}<pre class="replay-code">${escapeHtml(attempt.output || attempt.error_message || '')}</pre></article>`;
+            }).join('');
+            return `<section class="benchmark-case-group"><h5>${escapeHtml(testCase.name)}</h5><div class="benchmark-output-grid">${cards || '<p class="benchmark-empty">暂无输出</p>'}</div></section>`;
         }).join('');
-        detail.innerHTML = `<div class="benchmark-summary-table"><div class="table-responsive"><table class="data-table"><thead><tr><th>端点</th><th>模型</th><th>成功率</th><th>TTFT</th><th>总耗时</th><th>Token</th><th>评分</th></tr></thead><tbody>${rows}</tbody></table></div></div><div class="benchmark-attempts"><h4>样本输出</h4>${attempts || '<p class="benchmark-empty">暂无输出</p>'}</div>`;
+        detail.innerHTML = `<div class="benchmark-summary-table"><div class="table-responsive"><table class="data-table"><thead><tr><th>端点</th><th>模型</th><th>成功率</th><th>TTFT</th><th>总耗时</th><th>Token</th><th>评分</th></tr></thead><tbody>${rows}</tbody></table></div></div><div class="benchmark-attempts"><h4>样本输出</h4>${groups || '<p class="benchmark-empty">暂无输出</p>'}</div>`;
         showModal('benchmark-detail-modal');
     } catch { detail.innerHTML = '<p style="color:var(--danger);">加载评测结果失败</p>'; showModal('benchmark-detail-modal'); }
 }
