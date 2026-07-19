@@ -1136,18 +1136,26 @@ pub async fn create_model_benchmark(
 ) -> Result<HttpResponse, AppError> {
     check_admin_auth(&req, state.get_ref())?;
     let input = body.into_inner();
-    if input.model.trim().is_empty() || input.endpoint_ids.len() < 2 || input.cases.is_empty() {
-        return Err(AppError::BadRequest("需要选择模型、至少两个端点和一条样本".to_string()));
+    if input.targets.len() < 2 || input.cases.is_empty() {
+        return Err(AppError::BadRequest("需要选择至少两个端点与模型组合和一条样本".to_string()));
     }
+    let mut target_keys = std::collections::HashSet::new();
     let mut snapshots = Vec::new();
-    for endpoint_id in &input.endpoint_ids {
-        let endpoint = state.get_endpoint(endpoint_id).ok_or_else(|| AppError::BadRequest(format!("端点不存在: {}", endpoint_id)))?;
-        snapshots.push(endpoint.config);
+    let mut endpoint_ids = Vec::new();
+    for target in &input.targets {
+        if target.model.trim().is_empty() || !target_keys.insert((target.endpoint_id.clone(), target.model.clone())) {
+            return Err(AppError::BadRequest("每个端点与模型组合需要唯一且包含模型名称".to_string()));
+        }
+        let endpoint = state.get_endpoint(&target.endpoint_id).ok_or_else(|| AppError::BadRequest(format!("端点不存在: {}", target.endpoint_id)))?;
+        if !endpoint_ids.contains(&target.endpoint_id) {
+            endpoint_ids.push(target.endpoint_id.clone());
+            snapshots.push(endpoint.config);
+        }
     }
     if state.get_endpoint(&input.judge.endpoint_id).is_none() {
         return Err(AppError::BadRequest("评审端点不存在".to_string()));
     }
-    let run = ModelBenchmarkRun { id: uuid::Uuid::new_v4().to_string(), status: ModelBenchmarkStatus::Queued, created_at: Utc::now(), completed_at: None, model: input.model, endpoint_ids: input.endpoint_ids, endpoint_snapshots: snapshots, cases: input.cases, judge: input.judge, attempts_per_case: 3, attempts: Vec::new(), judge_results: Vec::new() };
+    let run = ModelBenchmarkRun { id: uuid::Uuid::new_v4().to_string(), status: ModelBenchmarkStatus::Queued, created_at: Utc::now(), completed_at: None, model: String::new(), endpoint_ids, targets: input.targets, endpoint_snapshots: snapshots, cases: input.cases, judge: input.judge, attempts_per_case: 3, attempts: Vec::new(), judge_results: Vec::new() };
     state.add_model_benchmark(run.clone());
     let task_state = state.clone();
     let task_id = run.id.clone();
@@ -1226,7 +1234,7 @@ mod benchmark_tests {
     async fn model_benchmark_create_validates_required_input() {
         let state = state().await;
         let req = authenticated_request(state.get_ref());
-        let input = CreateModelBenchmarkRequest { model: String::new(), endpoint_ids: Vec::new(), cases: Vec::new(), judge: BenchmarkJudgeConfig { endpoint_id: String::new(), model: String::new(), rubric: String::new() } };
+        let input = CreateModelBenchmarkRequest { targets: Vec::new(), cases: Vec::new(), judge: BenchmarkJudgeConfig { endpoint_id: String::new(), model: String::new(), rubric: String::new() } };
         assert!(create_model_benchmark(state, req, web::Json(input)).await.is_err());
     }
 }

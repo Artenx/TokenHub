@@ -9,6 +9,7 @@ let currentApis = [];
 let endpointSearchTerm = '';
 let currentReplayApiId = null;
 let currentReplayConfig = { max_records_per_api: 50, state_file_path: 'replay_state.json', max_body_size_kb: 1024 };
+let benchmarkTargets = [];
 
 // 初始化
 document.addEventListener('DOMContentLoaded', () => {
@@ -208,6 +209,7 @@ function initEventListeners() {
     document.getElementById('benchmark-form')?.addEventListener('submit', createModelBenchmark);
     document.getElementById('benchmark-endpoints')?.addEventListener('change', updateBenchmarkCandidateModels);
     document.getElementById('benchmark-judge-endpoint')?.addEventListener('change', updateBenchmarkJudgeModels);
+    document.getElementById('btn-add-benchmark-target')?.addEventListener('click', addBenchmarkTarget);
     document.querySelectorAll('.benchmark-tab').forEach(btn => btn.addEventListener('click', () => switchBenchmarkView(btn.dataset.benchmarkView)));
 
     // 密码表单
@@ -1752,9 +1754,8 @@ async function createModelBenchmark(event) {
     let cases;
     try { cases = JSON.parse(document.getElementById('benchmark-samples').value); } catch { showToast('样本 JSON 格式错误', 'error'); return; }
     if (!Array.isArray(cases) || !cases.length) { showToast('至少提供一条样本', 'error'); return; }
-    const endpointIds = Array.from(document.getElementById('benchmark-endpoints').selectedOptions).map(option => option.value);
-    if (endpointIds.length < 2) { showToast('至少选择两个候选端点', 'error'); return; }
-    const body = { model: document.getElementById('benchmark-model').value.trim(), endpoint_ids: endpointIds, cases: cases.map((item, index) => ({ id: item.id || `case-${index + 1}`, name: item.name || `样本 ${index + 1}`, messages: item.messages, system_prompt: item.system_prompt || null })), judge: { endpoint_id: document.getElementById('benchmark-judge-endpoint').value, model: document.getElementById('benchmark-judge-model').value.trim(), rubric: document.getElementById('benchmark-rubric').value.trim() } };
+    if (benchmarkTargets.length < 2) { showToast('至少添加两个被测模型组合', 'error'); return; }
+    const body = { targets: benchmarkTargets, cases: cases.map((item, index) => ({ id: item.id || `case-${index + 1}`, name: item.name || `样本 ${index + 1}`, messages: item.messages, system_prompt: item.system_prompt || null })), judge: { endpoint_id: document.getElementById('benchmark-judge-endpoint').value, model: document.getElementById('benchmark-judge-model').value, rubric: document.getElementById('benchmark-rubric').value.trim() } };
     try {
         const response = await fetch(`${API_BASE}/model-benchmarks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         if (!response.ok) throw new Error(await response.text());
@@ -1771,7 +1772,7 @@ async function loadModelBenchmarks() {
         if (!benchmarkResponse.ok) throw new Error('加载失败');
         const runs = await benchmarkResponse.json();
         await populateBenchmarkEndpointOptions();
-        container.innerHTML = runs.length ? runs.slice().reverse().map(run => `<article class="benchmark-run"><div class="benchmark-run-header"><span class="status-badge ${benchmarkStatusClass(run.status)}">${benchmarkStatusText(run.status)}</span><strong>${escapeHtml(run.model)}</strong><span>${run.endpoint_ids.length} 个端点</span><span>${run.cases.length} 条样本</span><span>${new Date(run.created_at).toLocaleString()}</span></div><div class="benchmark-run-actions"><button class="btn btn-small" onclick="showModelBenchmark('${escapeAttr(run.id)}')">查看结果</button>${['queued','running'].includes(run.status) ? `<button class="btn btn-small btn-danger" onclick="cancelModelBenchmark('${escapeAttr(run.id)}')">取消</button>` : ''}</div></article>`).join('') : '<p class="benchmark-empty">暂无评测任务</p>';
+        container.innerHTML = runs.length ? runs.slice().reverse().map(run => { const targets = run.targets?.length ? run.targets : run.endpoint_ids.map(endpoint_id => ({ endpoint_id, model: run.model })); return `<article class="benchmark-run"><div class="benchmark-run-header"><span class="status-badge ${benchmarkStatusClass(run.status)}">${benchmarkStatusText(run.status)}</span><strong>${targets.map(target => escapeHtml(target.model)).join('、')}</strong><span>${targets.length} 个组合</span><span>${run.cases.length} 条样本</span><span>${new Date(run.created_at).toLocaleString()}</span></div><div class="benchmark-run-actions"><button class="btn btn-small" onclick="showModelBenchmark('${escapeAttr(run.id)}')">查看结果</button>${['queued','running'].includes(run.status) ? `<button class="btn btn-small btn-danger" onclick="cancelModelBenchmark('${escapeAttr(run.id)}')">取消</button>` : ''}</div></article>`; }).join('') : '<p class="benchmark-empty">暂无评测任务</p>';
     } catch { container.innerHTML = '<p style="color:var(--danger);">加载评测任务失败</p>'; }
 }
 
@@ -1782,27 +1783,49 @@ async function populateBenchmarkEndpointOptions() {
     const response = await fetch(`${API_BASE}/model-benchmarks/candidates`);
     if (!response.ok) throw new Error('加载端点模型失败');
     const candidates = (await response.json()).filter(endpoint => endpoint.enabled);
-    const selectedCandidates = new Set(Array.from(candidateSelect.selectedOptions).map(option => option.value));
+    const selectedCandidate = candidateSelect.value;
     const selectedJudge = judgeSelect.value;
-    const options = candidates.map(endpoint => `<option value="${escapeAttr(endpoint.id)}" ${selectedCandidates.has(endpoint.id) ? 'selected' : ''}>${escapeHtml(endpoint.name)}${endpoint.models.length ? ` · ${endpoint.models.length} 个模型` : ' · 未发现模型'}</option>`).join('');
+    const options = candidates.map(endpoint => `<option value="${escapeAttr(endpoint.id)}" ${endpoint.id === selectedCandidate ? 'selected' : ''}>${escapeHtml(endpoint.name)}${endpoint.models.length ? ` · ${endpoint.models.length} 个模型` : ' · 未发现模型'}</option>`).join('');
     candidateSelect.innerHTML = options;
     judgeSelect.innerHTML = candidates.map(endpoint => `<option value="${escapeAttr(endpoint.id)}" ${endpoint.id === selectedJudge ? 'selected' : ''}>${escapeHtml(endpoint.name)}${endpoint.models.length ? ` · ${endpoint.models.length} 个模型` : ' · 未发现模型'}</option>`).join('');
     candidateSelect.dataset.models = JSON.stringify(candidates);
     judgeSelect.dataset.models = JSON.stringify(candidates);
     updateBenchmarkCandidateModels();
     updateBenchmarkJudgeModels();
+    renderBenchmarkTargets();
 }
 
 function updateBenchmarkCandidateModels() {
     const endpointSelect = document.getElementById('benchmark-endpoints');
     const modelSelect = document.getElementById('benchmark-model');
     const candidates = JSON.parse(endpointSelect.dataset.models || '[]');
-    const selected = Array.from(endpointSelect.selectedOptions).map(option => option.value);
     const selectedModel = modelSelect.value;
-    const modelSets = selected.map(id => new Set(candidates.find(endpoint => endpoint.id === id)?.models || []));
-    const models = modelSets.length ? [...modelSets[0]].filter(model => modelSets.every(set => set.has(model))).sort() : [];
+    const models = (candidates.find(endpoint => endpoint.id === endpointSelect.value)?.models || []).slice().sort();
     modelSelect.disabled = !models.length;
-    modelSelect.innerHTML = models.length ? `<option value="">选择被测模型</option>${models.map(model => `<option value="${escapeAttr(model)}" ${model === selectedModel ? 'selected' : ''}>${escapeHtml(model)}</option>`).join('')}` : '<option value="">所选端点没有共同模型</option>';
+    modelSelect.innerHTML = models.length ? `<option value="">选择被测模型</option>${models.map(model => `<option value="${escapeAttr(model)}" ${model === selectedModel ? 'selected' : ''}>${escapeHtml(model)}</option>`).join('')}` : '<option value="">该端点没有可用模型</option>';
+}
+
+function addBenchmarkTarget() {
+    const endpoint = document.getElementById('benchmark-endpoints');
+    const model = document.getElementById('benchmark-model');
+    if (!endpoint.value || !model.value) { showToast('请选择被测端点和模型', 'error'); return; }
+    if (benchmarkTargets.some(target => target.endpoint_id === endpoint.value && target.model === model.value)) { showToast('该端点与模型组合已添加', 'error'); return; }
+    benchmarkTargets.push({ endpoint_id: endpoint.value, model: model.value });
+    renderBenchmarkTargets();
+}
+
+function removeBenchmarkTarget(index) {
+    benchmarkTargets.splice(index, 1);
+    renderBenchmarkTargets();
+}
+
+function renderBenchmarkTargets() {
+    const container = document.getElementById('benchmark-targets');
+    const candidates = JSON.parse(document.getElementById('benchmark-endpoints').dataset.models || '[]');
+    container.innerHTML = benchmarkTargets.map((target, index) => {
+        const name = candidates.find(endpoint => endpoint.id === target.endpoint_id)?.name || target.endpoint_id;
+        return `<span class="benchmark-target">${escapeHtml(name)} · ${escapeHtml(target.model)}<button type="button" onclick="removeBenchmarkTarget(${index})" aria-label="移除">×</button></span>`;
+    }).join('') || '<small>尚未添加被测模型组合</small>';
 }
 
 function updateBenchmarkJudgeModels() {
@@ -1829,13 +1852,13 @@ async function showModelBenchmark(id) {
         const response = await fetch(`${API_BASE}/model-benchmarks/${id}`);
         if (!response.ok) throw new Error('加载失败');
         const data = await response.json();
-        const rows = data.summaries.map(summary => `<tr><td>${escapeHtml(summary.endpoint_name)}</td><td>${summary.success_rate.toFixed(1)}%</td><td>${summary.median_ttft_ms ?? '-'}</td><td>${summary.median_duration_ms ?? '-'}</td><td>${summary.average_total_tokens ?? '-'}</td><td>${summary.average_score?.toFixed(1) ?? '-'}</td></tr>`).join('');
+        const rows = data.summaries.map(summary => `<tr><td>${escapeHtml(summary.endpoint_name)}</td><td>${escapeHtml(summary.model)}</td><td>${summary.success_rate.toFixed(1)}%</td><td>${summary.median_ttft_ms ?? '-'}</td><td>${summary.median_duration_ms ?? '-'}</td><td>${summary.average_total_tokens ?? '-'}</td><td>${summary.average_score?.toFixed(1) ?? '-'}</td></tr>`).join('');
         const attempts = data.run.attempts.map(attempt => {
             const judge = data.run.judge_results.find(result => result.attempt_id === attempt.id);
             const judgeLine = judge && judge.score != null ? `<div class="benchmark-judge">评分 ${judge.score.toFixed(1)} · 准确性 ${judge.accuracy?.toFixed(1) ?? '-'} · 完整性 ${judge.completeness?.toFixed(1) ?? '-'} · 指令遵循 ${judge.instruction_following?.toFixed(1) ?? '-'} · 表达 ${judge.writing_quality?.toFixed(1) ?? '-'}</div>` : '';
-            return `<details class="benchmark-attempt"><summary><span>${escapeHtml(attempt.endpoint_name)}</span><span class="status-badge ${attempt.status === 'success' ? 'active' : 'disabled'}">${escapeHtml(attempt.status)}</span><span>${attempt.duration_ms}ms</span></summary><div class="benchmark-attempt-body">${judgeLine}<pre class="replay-code">${escapeHtml(attempt.output || attempt.error_message || '')}</pre></div></details>`;
+            return `<details class="benchmark-attempt"><summary><span>${escapeHtml(attempt.endpoint_name)} · ${escapeHtml(attempt.model)}</span><span class="status-badge ${attempt.status === 'success' ? 'active' : 'disabled'}">${escapeHtml(attempt.status)}</span><span>${attempt.duration_ms}ms</span></summary><div class="benchmark-attempt-body">${judgeLine}<pre class="replay-code">${escapeHtml(attempt.output || attempt.error_message || '')}</pre></div></details>`;
         }).join('');
-        detail.innerHTML = `<div class="benchmark-summary-table"><div class="table-responsive"><table class="data-table"><thead><tr><th>端点</th><th>成功率</th><th>TTFT</th><th>总耗时</th><th>Token</th><th>评分</th></tr></thead><tbody>${rows}</tbody></table></div></div><div class="benchmark-attempts"><h4>样本输出</h4>${attempts || '<p class="benchmark-empty">暂无输出</p>'}</div>`;
+        detail.innerHTML = `<div class="benchmark-summary-table"><div class="table-responsive"><table class="data-table"><thead><tr><th>端点</th><th>模型</th><th>成功率</th><th>TTFT</th><th>总耗时</th><th>Token</th><th>评分</th></tr></thead><tbody>${rows}</tbody></table></div></div><div class="benchmark-attempts"><h4>样本输出</h4>${attempts || '<p class="benchmark-empty">暂无输出</p>'}</div>`;
         showModal('benchmark-detail-modal');
     } catch { detail.innerHTML = '<p style="color:var(--danger);">加载评测结果失败</p>'; showModal('benchmark-detail-modal'); }
 }

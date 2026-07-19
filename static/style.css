@@ -1422,6 +1422,10 @@ nav {
 .benchmark-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 1rem; }
 .benchmark-full-row { grid-column: 1 / -1; }
 .benchmark-form-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; }
+.benchmark-target-picker { display: flex; align-items: center; gap: 0.75rem; }
+.benchmark-targets { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.625rem; }
+.benchmark-target { display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.375rem 0.5rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--background); font-size: 0.75rem; }
+.benchmark-target button { padding: 0; border: 0; background: transparent; color: var(--danger); font-size: 1rem; line-height: 1; cursor: pointer; }
 .benchmark-list { display: flex; flex-direction: column; gap: 0.5rem; }
 .benchmark-run { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.625rem 0.875rem; background: var(--background); border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .benchmark-run-header { display: flex; align-items: center; gap: 0.75rem; flex: 1; min-width: 0; font-size: 0.8125rem; }

@@ -1168,8 +1168,8 @@ impl AppState {
 
     pub fn model_benchmark_summaries(&self, id: &str) -> Vec<ModelBenchmarkSummary> {
         let Some(run) = self.get_model_benchmark(id) else { return Vec::new(); };
-        run.endpoint_ids.iter().filter_map(|endpoint_id| {
-            let attempts: Vec<_> = run.attempts.iter().filter(|a| &a.endpoint_id == endpoint_id).collect();
+        run.benchmark_targets().iter().filter_map(|target| {
+            let attempts: Vec<_> = run.attempts.iter().filter(|a| a.endpoint_id == target.endpoint_id && a.model == target.model).collect();
             if attempts.is_empty() { return None; }
             let successes: Vec<_> = attempts.iter().filter(|a| a.status == "success").collect();
             let median = |values: Vec<u64>| {
@@ -1184,7 +1184,7 @@ impl AppState {
                 .filter_map(|judge| judge.score).collect();
             let name = attempts[0].endpoint_name.clone();
             Some(ModelBenchmarkSummary {
-                endpoint_id: endpoint_id.clone(), endpoint_name: name,
+                endpoint_id: target.endpoint_id.clone(), endpoint_name: name, model: target.model.clone(),
                 attempts: attempts.len(),
                 success_rate: successes.len() as f64 / attempts.len() as f64 * 100.0,
                 median_ttft_ms: median(successes.iter().filter_map(|a| a.ttft_ms).collect()),
@@ -1684,10 +1684,10 @@ exposed_apis = []
         ModelBenchmarkRun {
             id: "benchmark-1".to_string(), status: ModelBenchmarkStatus::Queued,
             created_at: Utc::now(), completed_at: None, model: "test-model".to_string(),
-            endpoint_ids: vec!["endpoint-1".to_string()], endpoint_snapshots: Vec::new(),
+            endpoint_ids: vec!["endpoint-1".to_string()], targets: vec![ModelBenchmarkTarget { endpoint_id: "endpoint-1".to_string(), model: "model-1".to_string() }], endpoint_snapshots: Vec::new(),
             cases: Vec::new(), judge: BenchmarkJudgeConfig { endpoint_id: "judge".to_string(), model: "judge-model".to_string(), rubric: "score".to_string() },
             attempts_per_case: 3,
-            attempts: (1..=3).map(|n| ModelBenchmarkAttempt { id: format!("attempt-{}", n), case_id: "case".to_string(), endpoint_id: "endpoint-1".to_string(), endpoint_name: "Endpoint".to_string(), attempt_number: n, status: if n == 3 { "error".to_string() } else { "success".to_string() }, status_code: Some(200), ttft_ms: Some(n as u64 * 10), duration_ms: n as u64 * 100, total_tokens: Some(n as u64 * 5), output: String::new(), output_truncated: false, error_message: None }).collect(),
+            attempts: (1..=3).map(|n| ModelBenchmarkAttempt { id: format!("attempt-{}", n), case_id: "case".to_string(), endpoint_id: "endpoint-1".to_string(), endpoint_name: "Endpoint".to_string(), model: "model-1".to_string(), attempt_number: n, status: if n == 3 { "error".to_string() } else { "success".to_string() }, status_code: Some(200), ttft_ms: Some(n as u64 * 10), duration_ms: n as u64 * 100, total_tokens: Some(n as u64 * 5), output: String::new(), output_truncated: false, error_message: None }).collect(),
             judge_results: vec![ModelBenchmarkJudgeResult { attempt_id: "attempt-1".to_string(), status: "success".to_string(), score: Some(80.0), accuracy: Some(80.0), completeness: Some(80.0), instruction_following: Some(80.0), writing_quality: Some(80.0), reason: None, confidence: Some(0.9), raw_response: String::new(), response_truncated: false }],
         }
     }

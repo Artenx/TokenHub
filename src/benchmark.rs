@@ -75,15 +75,16 @@ pub async fn execute_benchmark_run(state: &AppState, run_id: &str) {
     state.update_model_benchmark(run.clone());
 
     for case in run.cases.clone() {
-        for endpoint in run.endpoint_snapshots.clone() {
+        for target in run.benchmark_targets() {
+            let Some(endpoint) = run.endpoint_snapshots.iter().find(|endpoint| endpoint.id == target.endpoint_id).cloned() else { continue; };
             for attempt_number in 1..=run.attempts_per_case {
                 if matches!(state.get_model_benchmark(run_id).map(|r| r.status), Some(ModelBenchmarkStatus::Cancelled)) { return; }
-                let request = json!({"model": run.model, "messages": case.messages.clone(), "stream": true});
+                let request = json!({"model": target.model, "messages": case.messages.clone(), "stream": true});
                 let (status, status_code, ttft_ms, duration_ms, output, total_tokens, error_message) = call_endpoint(state, &endpoint, request).await;
                 let (output, output_truncated) = truncate_body(output);
                 let attempt_id = uuid::Uuid::new_v4().to_string();
                 let success = status == "success";
-                run.attempts.push(ModelBenchmarkAttempt { id: attempt_id.clone(), case_id: case.id.clone(), endpoint_id: endpoint.id.clone(), endpoint_name: endpoint.name.clone(), attempt_number, status, status_code, ttft_ms, duration_ms, total_tokens, output: output.clone(), output_truncated, error_message });
+                run.attempts.push(ModelBenchmarkAttempt { id: attempt_id.clone(), case_id: case.id.clone(), endpoint_id: endpoint.id.clone(), endpoint_name: endpoint.name.clone(), model: target.model.clone(), attempt_number, status, status_code, ttft_ms, duration_ms, total_tokens, output: output.clone(), output_truncated, error_message });
                 if success {
                     let judge_endpoint = state.get_endpoint(&run.judge.endpoint_id).map(|endpoint| endpoint.config);
                     let judge_result = match judge_endpoint {

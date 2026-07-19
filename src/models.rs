@@ -733,6 +733,13 @@ pub struct BenchmarkJudgeConfig {
     pub rubric: String,
 }
 
+/// 一个待评测的端点与模型组合
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct ModelBenchmarkTarget {
+    pub endpoint_id: String,
+    pub model: String,
+}
+
 /// 单次端点评测结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelBenchmarkAttempt {
@@ -740,6 +747,7 @@ pub struct ModelBenchmarkAttempt {
     pub case_id: String,
     pub endpoint_id: String,
     pub endpoint_name: String,
+    pub model: String,
     pub attempt_number: u8,
     pub status: String,
     pub status_code: Option<u16>,
@@ -772,6 +780,7 @@ pub struct ModelBenchmarkJudgeResult {
 pub struct ModelBenchmarkSummary {
     pub endpoint_id: String,
     pub endpoint_name: String,
+    pub model: String,
     pub attempts: usize,
     pub success_rate: f64,
     pub median_ttft_ms: Option<u64>,
@@ -789,6 +798,8 @@ pub struct ModelBenchmarkRun {
     pub completed_at: Option<DateTime<Utc>>,
     pub model: String,
     pub endpoint_ids: Vec<String>,
+    #[serde(default)]
+    pub targets: Vec<ModelBenchmarkTarget>,
     pub endpoint_snapshots: Vec<EndpointConfig>,
     pub cases: Vec<ModelBenchmarkCase>,
     pub judge: BenchmarkJudgeConfig,
@@ -800,10 +811,22 @@ pub struct ModelBenchmarkRun {
     pub judge_results: Vec<ModelBenchmarkJudgeResult>,
 }
 
+impl ModelBenchmarkRun {
+    pub fn benchmark_targets(&self) -> Vec<ModelBenchmarkTarget> {
+        if self.targets.is_empty() {
+            self.endpoint_ids.iter().map(|endpoint_id| ModelBenchmarkTarget {
+                endpoint_id: endpoint_id.clone(),
+                model: self.model.clone(),
+            }).collect()
+        } else {
+            self.targets.clone()
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateModelBenchmarkRequest {
-    pub model: String,
-    pub endpoint_ids: Vec<String>,
+    pub targets: Vec<ModelBenchmarkTarget>,
     pub cases: Vec<ModelBenchmarkCase>,
     pub judge: BenchmarkJudgeConfig,
 }
