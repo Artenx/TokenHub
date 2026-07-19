@@ -1,4 +1,5 @@
 mod admin;
+mod benchmark;
 mod auth;
 mod config;
 mod converter;
@@ -236,6 +237,11 @@ async fn main() -> std::io::Result<()> {
             .route("/admin/api/stats", web::get().to(admin::get_stats))
             .route("/admin/api/logs", web::get().to(admin::list_call_logs))
             .route("/admin/api/latency-leaderboard", web::get().to(admin::list_latency_leaderboard))
+            .route("/admin/api/model-benchmarks", web::get().to(admin::list_model_benchmarks))
+            .route("/admin/api/model-benchmarks", web::post().to(admin::create_model_benchmark))
+            .route("/admin/api/model-benchmarks/candidates", web::get().to(admin::list_model_benchmark_candidates))
+            .route("/admin/api/model-benchmarks/{id}", web::get().to(admin::get_model_benchmark))
+            .route("/admin/api/model-benchmarks/{id}/cancel", web::post().to(admin::cancel_model_benchmark))
             // 静态文件（管理后台前端）
             .service(fs::Files::new("/admin", "static").index_file("index.html"))
             // 常见浏览器请求处理

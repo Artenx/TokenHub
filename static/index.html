@@ -64,7 +64,7 @@
                     <button class="nav-btn" data-tab="pools" role="tab" aria-selected="false" aria-controls="tab-pools"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>池管理</button>
                     <button class="nav-btn" data-tab="api-mgmt" role="tab" aria-selected="false" aria-controls="tab-api-mgmt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>接口管理</button>
                     <button class="nav-btn" data-tab="call-logs" role="tab" aria-selected="false" aria-controls="tab-call-logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>调用日志</button>
-                    <button class="nav-btn" data-tab="latency-leaderboard" role="tab" aria-selected="false" aria-controls="tab-latency-leaderboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>延迟排行榜</button>
+                    <button class="nav-btn" data-tab="model-benchmarks" role="tab" aria-selected="false" aria-controls="tab-model-benchmarks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 15v-3"/><path d="M12 15V8"/><path d="M16 15v-6"/></svg>模型评测</button>
                     <button class="nav-btn" data-tab="settings" role="tab" aria-selected="false" aria-controls="tab-settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>设置</button>
                 </nav>
                 <div class="sidebar-footer">
@@ -286,17 +286,29 @@
                         </div>
                     </div>
 
-                    <!-- 延迟排行榜 -->
-                    <div id="tab-latency-leaderboard" class="tab-content">
+                    <!-- 模型评测 -->
+                    <div id="tab-model-benchmarks" class="tab-content">
                         <div class="section">
-                            <div class="section-header">
-                                <h2>端点延迟排行榜</h2>
-                                <button id="btn-refresh-latency" class="btn btn-primary btn-small">刷新</button>
+                            <div class="section-header"><h2>模型评测</h2><button id="btn-refresh-benchmarks" class="btn btn-primary btn-small">刷新</button></div>
+                            <div class="benchmark-tabs"><button class="benchmark-tab active" data-benchmark-view="tasks">评测任务</button><button class="benchmark-tab" data-benchmark-view="monitor">运行监控</button></div>
+                            <div id="benchmark-tasks-view">
+                                <form id="benchmark-form" class="benchmark-form">
+                                    <div class="benchmark-form-grid">
+                                        <div class="form-group"><label for="benchmark-model">被测模型</label><input id="benchmark-model" required placeholder="gpt-4o"></div>
+                                        <div class="form-group"><label for="benchmark-judge-model">评审模型</label><input id="benchmark-judge-model" required></div>
+                                        <div class="form-group"><label for="benchmark-endpoints">候选端点</label><select id="benchmark-endpoints" multiple required size="4"></select><small>至少选择两个端点</small></div>
+                                        <div class="form-group"><label for="benchmark-judge-endpoint">评审端点</label><select id="benchmark-judge-endpoint" required></select></div>
+                                        <div class="form-group benchmark-full-row"><label for="benchmark-samples">样本 JSON</label><textarea id="benchmark-samples" rows="4" required placeholder='[{"name":"基础问答","messages":[{"role":"user","content":"解释什么是 TCP"}]}]'></textarea></div>
+                                        <div class="form-group benchmark-full-row"><label for="benchmark-rubric">评分标准</label><textarea id="benchmark-rubric" rows="2" required>评估准确性、完整性、指令遵循和表达质量。</textarea></div>
+                                        <div class="benchmark-form-actions"><button class="btn btn-primary" type="submit">开始评测</button></div>
+                                    </div>
+                                </form>
+                                <div id="benchmark-list" class="benchmark-list"></div>
                             </div>
-                            <p style="font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 16px;">
-                                统计最近 100 次请求的延迟数据，按平均延迟升序排列。数值越小响应越快。
-                            </p>
-                            <div class="table-responsive">
+                            <div id="benchmark-monitor-view" style="display:none;">
+                                <p style="font-size:0.8125rem;color:var(--text-secondary);margin-bottom:16px;">统计最近 100 次实际请求的端点延迟与错误率。</p>
+                                <button id="btn-refresh-latency" class="btn btn-primary btn-small" style="margin-bottom:12px;">刷新运行监控</button>
+                                <div class="table-responsive">
                                 <table class="data-table" id="latency-leaderboard-table">
                                     <thead>
                                         <tr>
@@ -319,6 +331,7 @@
                                         </tr>
                                     </tbody>
                                 </table>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -735,6 +748,17 @@
             </div>
         </div>
 
+        <!-- 模型评测详情模态框 -->
+        <div id="benchmark-detail-modal" class="modal" style="display:none; z-index: 1100;">
+            <div class="modal-content benchmark-detail-modal">
+                <div class="modal-header">
+                    <h2>评测结果</h2>
+                    <button class="modal-close">&times;</button>
+                </div>
+                <div id="benchmark-detail"></div>
+            </div>
+        </div>
+
         <!-- 数据回放记录模态框 -->
         <div id="replay-modal" class="modal" style="display:none; z-index: 1100;">
             <div class="modal-content" style="max-width: 1000px; max-height: 88vh; display: flex; flex-direction: column;">
@@ -761,6 +785,6 @@
         </footer>
     </div>
 
-    <script src="app.js?v=10"></script>
+    <script src="app.js?v=11"></script>
 </body>
 </html>

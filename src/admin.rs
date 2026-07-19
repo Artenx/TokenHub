@@ -4,6 +4,8 @@ use crate::models::*;
 use crate::state::AppState;
 use crate::validator::InputValidator;
 use actix_web::{web, HttpRequest, HttpResponse};
+use chrono::Utc;
+use serde_json::json;
 
 /// 获取所有端点
 pub async fn list_endpoints(
@@ -1126,4 +1128,94 @@ pub async fn list_latency_leaderboard(
         "success": true,
         "leaderboard": sorted
     })))
+}
+
+/// 创建并异步执行模型评测任务
+pub async fn create_model_benchmark(
+    state: web::Data<AppState>, req: HttpRequest, body: web::Json<CreateModelBenchmarkRequest>,
+) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    let input = body.into_inner();
+    if input.model.trim().is_empty() || input.endpoint_ids.len() < 2 || input.cases.is_empty() {
+        return Err(AppError::BadRequest("需要选择模型、至少两个端点和一条样本".to_string()));
+    }
+    let mut snapshots = Vec::new();
+    for endpoint_id in &input.endpoint_ids {
+        let endpoint = state.get_endpoint(endpoint_id).ok_or_else(|| AppError::BadRequest(format!("端点不存在: {}", endpoint_id)))?;
+        snapshots.push(endpoint.config);
+    }
+    if state.get_endpoint(&input.judge.endpoint_id).is_none() {
+        return Err(AppError::BadRequest("评审端点不存在".to_string()));
+    }
+    let run = ModelBenchmarkRun { id: uuid::Uuid::new_v4().to_string(), status: ModelBenchmarkStatus::Queued, created_at: Utc::now(), completed_at: None, model: input.model, endpoint_ids: input.endpoint_ids, endpoint_snapshots: snapshots, cases: input.cases, judge: input.judge, attempts_per_case: 3, attempts: Vec::new(), judge_results: Vec::new() };
+    state.add_model_benchmark(run.clone());
+    let task_state = state.clone();
+    let task_id = run.id.clone();
+    tokio::spawn(async move { crate::benchmark::execute_benchmark_run(task_state.get_ref(), &task_id).await; });
+    Ok(HttpResponse::Created().json(run))
+}
+
+pub async fn list_model_benchmarks(state: web::Data<AppState>, req: HttpRequest) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    Ok(HttpResponse::Ok().json(state.get_model_benchmarks()))
+}
+
+pub async fn get_model_benchmark(state: web::Data<AppState>, req: HttpRequest, path: web::Path<String>) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    let id = path.into_inner();
+    let run = state.get_model_benchmark(&id).ok_or_else(|| AppError::NotFound("评测任务不存在".to_string()))?;
+    Ok(HttpResponse::Ok().json(json!({"run": run, "summaries": state.model_benchmark_summaries(&id)})))
+}
+
+pub async fn cancel_model_benchmark(state: web::Data<AppState>, req: HttpRequest, path: web::Path<String>) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    let run = state.cancel_model_benchmark(&path.into_inner()).ok_or_else(|| AppError::NotFound("评测任务不存在".to_string()))?;
+    Ok(HttpResponse::Ok().json(run))
+}
+
+pub async fn list_model_benchmark_candidates(state: web::Data<AppState>, req: HttpRequest, query: web::Query<std::collections::HashMap<String, String>>) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    let model = query.get("model").cloned().unwrap_or_default();
+    let candidates: Vec<_> = state.endpoints.read().values().map(|endpoint| {
+        let models = state.get_cached_models(&endpoint.config.id).unwrap_or_default();
+        json!({"id": endpoint.config.id, "name": endpoint.config.name, "enabled": endpoint.config.enabled, "supports_model": model.is_empty() || models.is_empty() || models.iter().any(|candidate| candidate == &model)})
+    }).collect();
+    Ok(HttpResponse::Ok().json(candidates))
+}
+
+#[cfg(test)]
+mod benchmark_tests {
+    use super::*;
+    use actix_web::cookie::Cookie;
+    use actix_web::test::TestRequest;
+    use tempfile::TempDir;
+
+    async fn state() -> web::Data<AppState> {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        let manager = crate::config::ConfigManager::new(Some(path.to_str().unwrap()));
+        manager.save(&AppConfig::default()).await.unwrap();
+        // Keep the temporary directory for the test process by leaking it.
+        std::mem::forget(tmp);
+        web::Data::new(AppState::new(manager).await.unwrap())
+    }
+
+    fn authenticated_request(state: &AppState) -> HttpRequest {
+        let token = state.create_admin_session();
+        TestRequest::default().cookie(Cookie::new("admin_session", token)).to_http_request()
+    }
+
+    #[actix_rt::test]
+    async fn model_benchmark_list_requires_admin_session() {
+        let state = state().await;
+        assert!(list_model_benchmarks(state, TestRequest::default().to_http_request()).await.is_err());
+    }
+
+    #[actix_rt::test]
+    async fn model_benchmark_create_validates_required_input() {
+        let state = state().await;
+        let req = authenticated_request(state.get_ref());
+        let input = CreateModelBenchmarkRequest { model: String::new(), endpoint_ids: Vec::new(), cases: Vec::new(), judge: BenchmarkJudgeConfig { endpoint_id: String::new(), model: String::new(), rubric: String::new() } };
+        assert!(create_model_benchmark(state, req, web::Json(input)).await.is_err());
+    }
 }

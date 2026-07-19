@@ -704,6 +704,112 @@ pub struct ApiReplayRecord {
     pub response_truncated: bool,
 }
 
+/// 模型评测任务状态
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelBenchmarkStatus {
+    Queued,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+/// 模型评测样本
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelBenchmarkCase {
+    pub id: String,
+    pub name: String,
+    pub messages: serde_json::Value,
+    #[serde(default)]
+    pub system_prompt: Option<String>,
+}
+
+/// 任务内自动评审配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BenchmarkJudgeConfig {
+    pub endpoint_id: String,
+    pub model: String,
+    pub rubric: String,
+}
+
+/// 单次端点评测结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelBenchmarkAttempt {
+    pub id: String,
+    pub case_id: String,
+    pub endpoint_id: String,
+    pub endpoint_name: String,
+    pub attempt_number: u8,
+    pub status: String,
+    pub status_code: Option<u16>,
+    pub ttft_ms: Option<u64>,
+    pub duration_ms: u64,
+    pub total_tokens: Option<u64>,
+    pub output: String,
+    pub output_truncated: bool,
+    pub error_message: Option<String>,
+}
+
+/// 自动评审结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelBenchmarkJudgeResult {
+    pub attempt_id: String,
+    pub status: String,
+    pub score: Option<f64>,
+    pub accuracy: Option<f64>,
+    pub completeness: Option<f64>,
+    pub instruction_following: Option<f64>,
+    pub writing_quality: Option<f64>,
+    pub reason: Option<String>,
+    pub confidence: Option<f64>,
+    pub raw_response: String,
+    pub response_truncated: bool,
+}
+
+/// 按端点聚合的模型评测摘要
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelBenchmarkSummary {
+    pub endpoint_id: String,
+    pub endpoint_name: String,
+    pub attempts: usize,
+    pub success_rate: f64,
+    pub median_ttft_ms: Option<u64>,
+    pub median_duration_ms: Option<u64>,
+    pub average_total_tokens: Option<u64>,
+    pub average_score: Option<f64>,
+}
+
+/// 模型评测任务及其不可变配置快照
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelBenchmarkRun {
+    pub id: String,
+    pub status: ModelBenchmarkStatus,
+    pub created_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub model: String,
+    pub endpoint_ids: Vec<String>,
+    pub endpoint_snapshots: Vec<EndpointConfig>,
+    pub cases: Vec<ModelBenchmarkCase>,
+    pub judge: BenchmarkJudgeConfig,
+    #[serde(default = "default_benchmark_attempts")]
+    pub attempts_per_case: u8,
+    #[serde(default)]
+    pub attempts: Vec<ModelBenchmarkAttempt>,
+    #[serde(default)]
+    pub judge_results: Vec<ModelBenchmarkJudgeResult>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateModelBenchmarkRequest {
+    pub model: String,
+    pub endpoint_ids: Vec<String>,
+    pub cases: Vec<ModelBenchmarkCase>,
+    pub judge: BenchmarkJudgeConfig,
+}
+
+fn default_benchmark_attempts() -> u8 { 3 }
+
 /// 端点延迟统计
 #[derive(Debug, Clone, Serialize)]
 pub struct EndpointLatencyStats {

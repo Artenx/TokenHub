@@ -204,6 +204,9 @@ function initEventListeners() {
     if (btnRefreshLatency) {
         btnRefreshLatency.addEventListener('click', loadLatencyLeaderboard);
     }
+    document.getElementById('btn-refresh-benchmarks')?.addEventListener('click', loadModelBenchmarks);
+    document.getElementById('benchmark-form')?.addEventListener('submit', createModelBenchmark);
+    document.querySelectorAll('.benchmark-tab').forEach(btn => btn.addEventListener('click', () => switchBenchmarkView(btn.dataset.benchmarkView)));
 
     // 密码表单
     document.getElementById('password-form').addEventListener('submit', handleChangePassword);
@@ -1728,11 +1731,87 @@ function switchTab(tab) {
         loadApisPage();
     } else if (tab === 'call-logs') {
         loadCallLogs();
-    } else if (tab === 'latency-leaderboard') {
-        loadLatencyLeaderboard();
+    } else if (tab === 'model-benchmarks') {
+        loadModelBenchmarks();
     } else if (tab === 'settings') {
         loadReplayConfig();
     }
+}
+
+function switchBenchmarkView(view) {
+    document.getElementById('benchmark-tasks-view').style.display = view === 'tasks' ? '' : 'none';
+    document.getElementById('benchmark-monitor-view').style.display = view === 'monitor' ? '' : 'none';
+    document.querySelectorAll('.benchmark-tab').forEach(btn => btn.classList.toggle('active', btn.dataset.benchmarkView === view));
+    if (view === 'monitor') loadLatencyLeaderboard();
+}
+
+async function createModelBenchmark(event) {
+    event.preventDefault();
+    let cases;
+    try { cases = JSON.parse(document.getElementById('benchmark-samples').value); } catch { showToast('样本 JSON 格式错误', 'error'); return; }
+    if (!Array.isArray(cases) || !cases.length) { showToast('至少提供一条样本', 'error'); return; }
+    const endpointIds = Array.from(document.getElementById('benchmark-endpoints').selectedOptions).map(option => option.value);
+    if (endpointIds.length < 2) { showToast('至少选择两个候选端点', 'error'); return; }
+    const body = { model: document.getElementById('benchmark-model').value.trim(), endpoint_ids: endpointIds, cases: cases.map((item, index) => ({ id: item.id || `case-${index + 1}`, name: item.name || `样本 ${index + 1}`, messages: item.messages, system_prompt: item.system_prompt || null })), judge: { endpoint_id: document.getElementById('benchmark-judge-endpoint').value, model: document.getElementById('benchmark-judge-model').value.trim(), rubric: document.getElementById('benchmark-rubric').value.trim() } };
+    try {
+        const response = await fetch(`${API_BASE}/model-benchmarks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        if (!response.ok) throw new Error(await response.text());
+        showToast('模型评测任务已创建', 'success');
+        await loadModelBenchmarks();
+    } catch (error) { showToast(`创建评测失败: ${error.message}`, 'error'); }
+}
+
+async function loadModelBenchmarks() {
+    const container = document.getElementById('benchmark-list');
+    if (!container) return;
+    try {
+        const [benchmarkResponse, statsResponse] = await Promise.all([fetch(`${API_BASE}/model-benchmarks`), fetch(`${API_BASE}/stats`)]);
+        if (!benchmarkResponse.ok || !statsResponse.ok) throw new Error('加载失败');
+        const runs = await benchmarkResponse.json();
+        const stats = await statsResponse.json();
+        currentEndpoints = stats.endpoints || [];
+        populateBenchmarkEndpointOptions();
+        container.innerHTML = runs.length ? runs.slice().reverse().map(run => `<article class="benchmark-run"><div class="benchmark-run-header"><span class="status-badge ${benchmarkStatusClass(run.status)}">${benchmarkStatusText(run.status)}</span><strong>${escapeHtml(run.model)}</strong><span>${run.endpoint_ids.length} 个端点</span><span>${run.cases.length} 条样本</span><span>${new Date(run.created_at).toLocaleString()}</span></div><div class="benchmark-run-actions"><button class="btn btn-small" onclick="showModelBenchmark('${escapeAttr(run.id)}')">查看结果</button>${['queued','running'].includes(run.status) ? `<button class="btn btn-small btn-danger" onclick="cancelModelBenchmark('${escapeAttr(run.id)}')">取消</button>` : ''}</div></article>`).join('') : '<p class="benchmark-empty">暂无评测任务</p>';
+    } catch { container.innerHTML = '<p style="color:var(--danger);">加载评测任务失败</p>'; }
+}
+
+function populateBenchmarkEndpointOptions() {
+    const candidateSelect = document.getElementById('benchmark-endpoints');
+    const judgeSelect = document.getElementById('benchmark-judge-endpoint');
+    if (!candidateSelect || !judgeSelect) return;
+    const candidates = currentEndpoints.filter(ep => ep.enabled);
+    const options = candidates.map(ep => `<option value="${escapeAttr(ep.id)}">${escapeHtml(ep.name)} · ${escapeHtml(ep.api_type)}</option>`).join('');
+    candidateSelect.innerHTML = options;
+    judgeSelect.innerHTML = options;
+}
+
+function benchmarkStatusClass(status) {
+    return { completed: 'active', failed: 'disabled', cancelled: 'disabled', running: 'exhausted', queued: 'exhausted' }[status] || 'exhausted';
+}
+
+function benchmarkStatusText(status) {
+    return { completed: '已完成', failed: '失败', cancelled: '已取消', running: '执行中', queued: '排队中' }[status] || status;
+}
+
+async function showModelBenchmark(id) {
+    const detail = document.getElementById('benchmark-detail');
+    try {
+        const response = await fetch(`${API_BASE}/model-benchmarks/${id}`);
+        if (!response.ok) throw new Error('加载失败');
+        const data = await response.json();
+        const rows = data.summaries.map(summary => `<tr><td>${escapeHtml(summary.endpoint_name)}</td><td>${summary.success_rate.toFixed(1)}%</td><td>${summary.median_ttft_ms ?? '-'}</td><td>${summary.median_duration_ms ?? '-'}</td><td>${summary.average_total_tokens ?? '-'}</td><td>${summary.average_score?.toFixed(1) ?? '-'}</td></tr>`).join('');
+        const attempts = data.run.attempts.map(attempt => {
+            const judge = data.run.judge_results.find(result => result.attempt_id === attempt.id);
+            const judgeLine = judge && judge.score != null ? `<div class="benchmark-judge">评分 ${judge.score.toFixed(1)} · 准确性 ${judge.accuracy?.toFixed(1) ?? '-'} · 完整性 ${judge.completeness?.toFixed(1) ?? '-'} · 指令遵循 ${judge.instruction_following?.toFixed(1) ?? '-'} · 表达 ${judge.writing_quality?.toFixed(1) ?? '-'}</div>` : '';
+            return `<details class="benchmark-attempt"><summary><span>${escapeHtml(attempt.endpoint_name)}</span><span class="status-badge ${attempt.status === 'success' ? 'active' : 'disabled'}">${escapeHtml(attempt.status)}</span><span>${attempt.duration_ms}ms</span></summary><div class="benchmark-attempt-body">${judgeLine}<pre class="replay-code">${escapeHtml(attempt.output || attempt.error_message || '')}</pre></div></details>`;
+        }).join('');
+        detail.innerHTML = `<div class="benchmark-summary-table"><div class="table-responsive"><table class="data-table"><thead><tr><th>端点</th><th>成功率</th><th>TTFT</th><th>总耗时</th><th>Token</th><th>评分</th></tr></thead><tbody>${rows}</tbody></table></div></div><div class="benchmark-attempts"><h4>样本输出</h4>${attempts || '<p class="benchmark-empty">暂无输出</p>'}</div>`;
+        showModal('benchmark-detail-modal');
+    } catch { detail.innerHTML = '<p style="color:var(--danger);">加载评测结果失败</p>'; showModal('benchmark-detail-modal'); }
+}
+
+async function cancelModelBenchmark(id) {
+    try { const response = await fetch(`${API_BASE}/model-benchmarks/${id}/cancel`, { method: 'POST' }); if (!response.ok) throw new Error(); showToast('评测任务已取消', 'success'); await loadModelBenchmarks(); } catch { showToast('取消评测任务失败', 'error'); }
 }
 
 // ========== 端点管理页面 ==========
