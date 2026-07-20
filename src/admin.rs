@@ -9,6 +9,51 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::Utc;
 use reqwest::{redirect::Policy, Url};
 use serde_json::json;
+use std::io::Cursor;
+
+fn github_archive_url_and_directory(url: &Url) -> Result<(Url, String), AppError> {
+    let parts: Vec<_> = url.path_segments().ok_or_else(|| AppError::BadRequest("GitHub 技能地址无效".to_string()))?.collect();
+    if parts.len() < 6 || parts[2] != "tree" || parts[3] != "HEAD" {
+        return Err(AppError::BadRequest("GitHub 技能地址必须指向 HEAD 分支中的目录".to_string()));
+    }
+    let archive_url = Url::parse(&format!("https://codeload.github.com/{}/{}/zip/HEAD", parts[0], parts[1]))
+        .map_err(|error| AppError::Internal(error.to_string()))?;
+    Ok((archive_url, parts[4..].join("/")))
+}
+
+fn isolate_github_skill_archive(archive: &[u8], skill_directory: &str) -> Result<Vec<u8>, AppError> {
+    let mut source = zip::ZipArchive::new(Cursor::new(archive))
+        .map_err(|error| AppError::BadRequest(format!("读取 GitHub 归档失败: {}", error)))?;
+    let root = skill_directory.rsplit('/').next().filter(|name| !name.is_empty())
+        .ok_or_else(|| AppError::BadRequest("GitHub 技能目录无效".to_string()))?;
+    let prefix = format!("{}/", skill_directory.trim_matches('/'));
+    let output = Cursor::new(Vec::new());
+    let mut writer = zip::ZipWriter::new(output);
+    let mut has_skill_md = false;
+    for index in 0..source.len() {
+        let mut entry = source.by_index(index)
+            .map_err(|error| AppError::BadRequest(format!("读取 GitHub 归档条目失败: {}", error)))?;
+        if entry.is_dir() {
+            continue;
+        }
+        let Some((_, repository_path)) = entry.name().split_once('/') else { continue; };
+        let Some(relative_path) = repository_path.strip_prefix(&prefix).map(str::to_owned) else { continue; };
+        if relative_path.is_empty() {
+            continue;
+        }
+        writer.start_file(format!("{}/{}", root, relative_path), zip::write::FileOptions::default())
+            .map_err(|error| AppError::Internal(format!("创建技能归档失败: {}", error)))?;
+        std::io::copy(&mut entry, &mut writer)
+            .map_err(|error| AppError::BadRequest(format!("读取 GitHub 技能内容失败: {}", error)))?;
+        has_skill_md |= relative_path == "SKILL.md";
+    }
+    if !has_skill_md {
+        return Err(AppError::BadRequest("GitHub 归档中未找到目标技能目录的 SKILL.md".to_string()));
+    }
+    writer.finish()
+        .map(|cursor| cursor.into_inner())
+        .map_err(|error| AppError::Internal(format!("完成技能归档失败: {}", error)))
+}
 
 #[derive(serde::Deserialize)]
 pub struct SkillImportRequest {
@@ -1427,9 +1472,15 @@ pub async fn preview_remote_skill(state: web::Data<AppState>, req: HttpRequest, 
     if !permitted {
         return Err(AppError::BadRequest("技能包下载地址不属于所选公开来源".to_string()));
     }
+    let (download_url, github_skill_directory) = if matches!(source.source_type, SkillSourceType::Github) && archive_url.host_str() == Some("github.com") {
+        let (download_url, directory) = github_archive_url_and_directory(&archive_url)?;
+        (download_url, Some(directory))
+    } else {
+        (archive_url.clone(), None)
+    };
     let client = reqwest::Client::builder().redirect(Policy::none()).timeout(std::time::Duration::from_secs(30)).build()
         .map_err(|error| AppError::Internal(error.to_string()))?;
-    let response = client.get(archive_url.clone()).send().await.map_err(|error| AppError::BadRequest(format!("下载技能包失败: {}", error)))?;
+    let response = client.get(download_url).send().await.map_err(|error| AppError::BadRequest(format!("下载技能包失败: {}", error)))?;
     if !response.status().is_success() {
         return Err(AppError::BadRequest(format!("下载技能包失败: HTTP {}", response.status())));
     }
@@ -1438,6 +1489,10 @@ pub async fn preview_remote_skill(state: web::Data<AppState>, req: HttpRequest, 
         return Err(AppError::BadRequest("技能包下载内容超过总容量上限".to_string()));
     }
     let archive = response.bytes().await.map_err(|error| AppError::BadRequest(format!("读取技能包失败: {}", error)))?;
+    let archive = github_skill_directory
+        .map(|directory| isolate_github_skill_archive(&archive, &directory))
+        .transpose()?
+        .unwrap_or_else(|| archive.to_vec());
     let origin = SkillOrigin { source_type: source.source_type, url: archive_url.to_string(), version: input.version, content_digest: None };
     let (preview, package) = preview_zip_archive(&archive, origin, &root, &config).map_err(|error| AppError::BadRequest(error.to_string()))?;
     state.store_skill_import_preview(preview.clone(), package);
@@ -1476,6 +1531,21 @@ mod benchmark_tests {
         archive.start_file(format!("{}/README.md", directory_name), zip::write::FileOptions::default()).unwrap();
         archive.write_all(b"Details").unwrap();
         web::Bytes::from(archive.finish().unwrap().into_inner())
+    }
+
+    #[test]
+    fn github_archive_preview_keeps_only_selected_skill_directory() {
+        let cursor = Cursor::new(Vec::new());
+        let mut archive = zip::ZipWriter::new(cursor);
+        archive.start_file("repo-HEAD/skills/review/SKILL.md", zip::write::FileOptions::default()).unwrap();
+        archive.write_all(b"# Review").unwrap();
+        archive.start_file("repo-HEAD/skills/review/README.md", zip::write::FileOptions::default()).unwrap();
+        archive.write_all(b"Details").unwrap();
+        archive.start_file("repo-HEAD/skills/other/SKILL.md", zip::write::FileOptions::default()).unwrap();
+        archive.write_all(b"# Other").unwrap();
+        let isolated = isolate_github_skill_archive(&archive.finish().unwrap().into_inner(), "skills/review").unwrap();
+        let isolated = zip::ZipArchive::new(Cursor::new(isolated)).unwrap();
+        assert_eq!(isolated.file_names().collect::<Vec<_>>(), vec!["review/SKILL.md", "review/README.md"]);
     }
 
     #[actix_rt::test]

@@ -66,6 +66,7 @@
                     <button class="nav-btn" data-tab="call-logs" role="tab" aria-selected="false" aria-controls="tab-call-logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>调用日志</button>
                     <button class="nav-btn" data-tab="model-benchmarks" role="tab" aria-selected="false" aria-controls="tab-model-benchmarks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 15v-3"/><path d="M12 15V8"/><path d="M16 15v-6"/></svg>模型评测</button>
                     <button class="nav-btn" data-tab="settings" role="tab" aria-selected="false" aria-controls="tab-settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>设置</button>
+                    <button class="nav-btn" data-tab="skill-repository" role="tab" aria-selected="false" aria-controls="tab-skill-repository"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11l2 2.5h4.5A2.5 2.5 0 0 1 20 8v10.5A2.5 2.5 0 0 1 17.5 21h-11A2.5 2.5 0 0 1 4 18.5z"/><path d="M8 12h8M8 16h5"/></svg>技能仓库</button>
                 </nav>
                 <div class="sidebar-footer">
                     Crafted by Artenx
@@ -333,6 +334,20 @@
                         </div>
                     </div>
 
+                    <!-- 技能仓库 -->
+                    <div id="tab-skill-repository" class="tab-content">
+                        <div class="section skill-repository-section">
+                            <div class="section-header">
+                                <div><h2>技能仓库</h2><p class="skill-page-intro">集中维护可离线使用的 Skill 包，并从公开来源发现新能力。</p></div>
+                                <div class="skill-header-actions"><button id="btn-refresh-skills" class="btn btn-secondary btn-small">刷新本地技能</button><label class="btn btn-primary btn-small" for="skill-upload-input">上传 ZIP</label><input id="skill-upload-input" type="file" accept=".zip,application/zip" hidden></div>
+                            </div>
+                            <div class="skill-tabs" role="tablist"><button class="skill-tab active" data-skill-view="local" type="button">本地技能</button><button class="skill-tab" data-skill-view="search" type="button">联网搜索</button><button class="skill-tab" data-skill-view="sources" type="button">来源设置</button></div>
+                            <div id="skill-local-view" class="skill-view"><div id="skill-local-list" class="skill-card-grid"><p class="skill-empty">正在读取本地技能...</p></div></div>
+                            <div id="skill-search-view" class="skill-view" style="display:none"><form id="skill-search-form" class="skill-search-form"><input id="skill-search-keyword" type="search" placeholder="按技能名称、用途或关键词搜索" autocomplete="off" required><button class="btn btn-primary" type="submit">搜索公开技能</button></form><div id="skill-source-status" class="skill-source-status"></div><div id="skill-search-results" class="skill-result-list"><p class="skill-empty">输入关键词后搜索已启用的公开来源。</p></div></div>
+                            <div id="skill-sources-view" class="skill-view" style="display:none"><div class="skill-source-toolbar"><p>启用的来源会参与后续搜索。自定义索引必须提供 HTTPS 地址。</p><button id="btn-add-skill-source" class="btn btn-secondary btn-small" type="button">添加公开索引</button></div><div id="skill-source-list" class="skill-source-list"></div><div class="skill-source-actions"><button id="btn-save-skill-sources" class="btn btn-primary" type="button">保存来源设置</button></div></div>
+                        </div>
+                    </div>
+
                     <!-- 系统设置 -->
                     <div id="tab-settings" class="tab-content">
                         <div class="section">
@@ -413,6 +428,15 @@
                     <button type="button" class="btn modal-close">取消</button>
                     <button type="button" class="btn btn-primary" id="btn-confirm-add-endpoints">确认添加</button>
                 </div>
+            </div>
+        </div>
+
+        <!-- 技能详情与导入预览 -->
+        <div id="skill-modal" class="modal" style="display:none" role="dialog" aria-modal="true">
+            <div class="modal-content skill-modal-content">
+                <div class="modal-header"><h2 id="skill-modal-title">技能详情</h2><button class="modal-close" type="button">&times;</button></div>
+                <div id="skill-modal-body"></div>
+                <div id="skill-modal-actions" class="form-actions skill-modal-actions"></div>
             </div>
         </div>
 

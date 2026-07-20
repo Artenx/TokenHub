@@ -10,6 +10,7 @@ let endpointSearchTerm = '';
 let currentReplayApiId = null;
 let currentReplayConfig = { max_records_per_api: 50, state_file_path: 'replay_state.json', max_body_size_kb: 1024 };
 let benchmarkTargets = [];
+let currentSkillSources = [];
 const builtinBenchmarkCases = [
     { id: 'math-discount', category: '数学推理', name: '折扣与税费计算', content: '一件商品标价 240 元，先打八折，再按折后价格加收 6% 税费。请列出计算步骤并给出最终价格。' },
     { id: 'logic-seating', category: '逻辑推理', name: '座位排列推理', content: '甲、乙、丙、丁四人从左到右坐成一排。甲不坐两端，乙坐在丙左侧，丁不与甲相邻。请给出一种满足条件的排列，并简要说明。' },
@@ -226,6 +227,12 @@ function initEventListeners() {
     document.getElementById('btn-import-benchmark-cases')?.addEventListener('click', importBuiltinBenchmarkCases);
     renderBuiltinBenchmarkCases();
     document.querySelectorAll('.benchmark-tab').forEach(btn => btn.addEventListener('click', () => switchBenchmarkView(btn.dataset.benchmarkView)));
+    document.getElementById('btn-refresh-skills')?.addEventListener('click', loadLocalSkills);
+    document.getElementById('skill-upload-input')?.addEventListener('change', previewSkillUpload);
+    document.getElementById('skill-search-form')?.addEventListener('submit', searchSkills);
+    document.querySelectorAll('.skill-tab').forEach(btn => btn.addEventListener('click', () => switchSkillView(btn.dataset.skillView)));
+    document.getElementById('btn-add-skill-source')?.addEventListener('click', addCustomSkillSource);
+    document.getElementById('btn-save-skill-sources')?.addEventListener('click', saveSkillSources);
 
     // 密码表单
     document.getElementById('password-form').addEventListener('submit', handleChangePassword);
@@ -1752,6 +1759,8 @@ function switchTab(tab) {
         loadCallLogs();
     } else if (tab === 'model-benchmarks') {
         loadModelBenchmarks();
+    } else if (tab === 'skill-repository') {
+        loadSkillRepository();
     } else if (tab === 'settings') {
         loadReplayConfig();
     }
@@ -4087,4 +4096,201 @@ function renderLatencyLeaderboard(stats) {
             </tr>
         `;
     }).join('');
+}
+
+// ========== 技能仓库 ==========
+
+const defaultSkillSources = [
+    { id: 'github', name: 'GitHub', source_type: 'github', url: 'https://api.github.com', enabled: true, last_status: null, last_checked_at: null },
+    { id: 'skillhub', name: 'SkillHub', source_type: 'skillhub', url: 'https://api.skillhub.cn', enabled: true, last_status: null, last_checked_at: null },
+];
+
+async function loadSkillRepository() {
+    await Promise.all([loadLocalSkills(), loadSkillSources()]);
+}
+
+function switchSkillView(view) {
+    document.querySelectorAll('.skill-tab').forEach(button => button.classList.toggle('active', button.dataset.skillView === view));
+    document.querySelectorAll('.skill-view').forEach(panel => {
+        panel.style.display = panel.id === `skill-${view}-view` ? '' : 'none';
+    });
+    if (view === 'sources') loadSkillSources();
+}
+
+async function readSkillApiError(response) {
+    const body = await response.text();
+    try { return JSON.parse(body).error?.message || JSON.parse(body).message || body; } catch { return body || `HTTP ${response.status}`; }
+}
+
+async function loadLocalSkills() {
+    const container = document.getElementById('skill-local-list');
+    if (!container) return;
+    container.innerHTML = '<p class="skill-empty">正在读取本地技能...</p>';
+    try {
+        const response = await fetch(`${API_BASE}/skills`);
+        if (!response.ok) throw new Error(await readSkillApiError(response));
+        renderLocalSkills(await response.json());
+    } catch (error) {
+        container.innerHTML = `<p class="skill-empty skill-error">加载失败: ${escapeHtml(error.message)}</p>`;
+    }
+}
+
+function renderLocalSkills(skills) {
+    const container = document.getElementById('skill-local-list');
+    if (!skills.length) {
+        container.innerHTML = '<div class="skill-empty-panel"><strong>本地仓库还没有技能包</strong><span>上传包含根目录 SKILL.md 的 ZIP 文件，或从联网搜索中导入。</span></div>';
+        return;
+    }
+    container.innerHTML = skills.map(skill => {
+        const source = skill.source?.url || '本地上传';
+        const valid = skill.validation_status === 'valid';
+        return `<article class="skill-card">
+            <div class="skill-card-top"><span class="skill-status ${valid ? 'valid' : 'invalid'}">${valid ? '有效' : '需处理'}</span><code>${escapeHtml(skill.directory_name)}</code></div>
+            <h3>${escapeHtml(skill.name)}</h3>
+            <p>${escapeHtml(skill.description || skill.validation_message || '未提供描述')}</p>
+            <div class="skill-card-meta"><span>${skill.file_count} 个文件</span><span title="${escapeAttr(source)}">${escapeHtml(source)}</span></div>
+            <div class="skill-card-actions"><button class="btn btn-small" type="button" onclick="openSkillDetails('${escapeAttr(skill.id)}')">查看详情</button><button class="btn btn-small btn-danger" type="button" onclick="confirmSkillDelete('${escapeAttr(skill.directory_name)}')">删除</button></div>
+        </article>`;
+    }).join('');
+}
+
+async function openSkillDetails(id) {
+    try {
+        const response = await fetch(`${API_BASE}/skills/${encodeURIComponent(id)}`);
+        if (!response.ok) throw new Error(await readSkillApiError(response));
+        const { skill, skill_md: skillMd, files } = await response.json();
+        document.getElementById('skill-modal-title').textContent = skill.name;
+        document.getElementById('skill-modal-body').innerHTML = `<div class="skill-detail-meta"><span class="skill-status ${skill.validation_status === 'valid' ? 'valid' : 'invalid'}">${escapeHtml(skill.validation_status)}</span><code>${escapeHtml(skill.directory_name)}</code><span>${skill.file_count} 个文件</span></div><p class="skill-detail-description">${escapeHtml(skill.description || '未提供描述')}</p><h3>SKILL.md</h3><pre class="skill-code">${escapeHtml(skillMd)}</pre><h3>文件清单</h3><ul class="skill-file-list">${files.map(file => `<li><code>${escapeHtml(file)}</code></li>`).join('')}</ul>`;
+        document.getElementById('skill-modal-actions').innerHTML = `<button class="btn btn-secondary" type="button" onclick="hideModal('skill-modal')">关闭</button><button class="btn btn-danger" type="button" onclick="confirmSkillDelete('${escapeAttr(skill.directory_name)}')">删除技能</button>`;
+        showModal('skill-modal');
+    } catch (error) { showToast(`无法读取技能详情: ${error.message}`, 'error'); }
+}
+
+async function previewSkillUpload(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+        const response = await fetch(`${API_BASE}/skills/upload-preview`, { method: 'POST', headers: { 'Content-Type': 'application/zip' }, body: file });
+        if (!response.ok) throw new Error(await readSkillApiError(response));
+        showSkillImportPreview(await response.json(), '上传技能包');
+    } catch (error) { showToast(`上传预览失败: ${error.message}`, 'error'); }
+}
+
+function showSkillImportPreview(preview, title) {
+    document.getElementById('skill-modal-title').textContent = title;
+    const conflictText = preview.conflict ? '<p class="skill-conflict">本地已存在同名目录。确认后将替换现有技能包。</p>' : '';
+    document.getElementById('skill-modal-body').innerHTML = `<div class="skill-preview-summary"><strong>${escapeHtml(preview.target_directory_name)}</strong><span>${preview.files.length} 个文件</span><span>有效至 ${escapeHtml(formatDateTime(preview.expires_at))}</span></div>${conflictText}<h3>文件清单</h3><ul class="skill-file-list">${preview.files.map(file => `<li><code>${escapeHtml(file)}</code></li>`).join('')}</ul>`;
+    const importAction = preview.conflict ? `confirmSkillImport('${escapeAttr(preview.id)}', true)` : `confirmSkillImport('${escapeAttr(preview.id)}', false)`;
+    document.getElementById('skill-modal-actions').innerHTML = `<button class="btn btn-secondary" type="button" onclick="hideModal('skill-modal')">取消</button><button class="btn ${preview.conflict ? 'btn-danger' : 'btn-primary'}" type="button" onclick="${importAction}">${preview.conflict ? '替换本地版本' : '确认导入'}</button>`;
+    showModal('skill-modal');
+}
+
+async function confirmSkillImport(previewId, replace) {
+    try {
+        const response = await fetch(`${API_BASE}/skills/import`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ preview_id: previewId, replace }) });
+        if (!response.ok) throw new Error(await readSkillApiError(response));
+        hideModal('skill-modal');
+        showToast(replace ? '技能包已替换' : '技能包已导入', 'success');
+        await loadLocalSkills();
+        switchSkillView('local');
+    } catch (error) { showToast(`导入失败: ${error.message}`, 'error'); }
+}
+
+async function confirmSkillDelete(directoryName) {
+    const confirmation = prompt(`输入技能目录名“${directoryName}”以确认删除：`);
+    if (confirmation === null) return;
+    if (confirmation !== directoryName) { showToast('确认内容与技能目录不一致', 'error'); return; }
+    try {
+        const response = await fetch(`${API_BASE}/skills/${encodeURIComponent(directoryName)}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmation }) });
+        if (!response.ok) throw new Error(await readSkillApiError(response));
+        hideModal('skill-modal');
+        showToast('技能包已删除', 'success');
+        await loadLocalSkills();
+    } catch (error) { showToast(`删除失败: ${error.message}`, 'error'); }
+}
+
+async function searchSkills(event) {
+    event.preventDefault();
+    const keyword = document.getElementById('skill-search-keyword').value.trim();
+    const results = document.getElementById('skill-search-results');
+    const statuses = document.getElementById('skill-source-status');
+    if (!keyword) return;
+    results.innerHTML = '<p class="skill-empty">正在搜索公开来源...</p>';
+    statuses.innerHTML = '';
+    try {
+        const response = await fetch(`${API_BASE}/skill-sources/search?keyword=${encodeURIComponent(keyword)}`);
+        if (!response.ok) throw new Error(await readSkillApiError(response));
+        const payload = await response.json();
+        currentSkillSources = payload.sources || currentSkillSources;
+        statuses.innerHTML = (payload.outcomes || []).map(outcome => `<span class="source-status ${outcome.error ? 'error' : 'available'}">${escapeHtml(outcome.source_id)}: ${escapeHtml(outcome.error || `${outcome.results.length} 个结果`)}</span>`).join('');
+        const matches = (payload.outcomes || []).flatMap(outcome => outcome.results || []);
+        renderSkillSearchResults(matches);
+    } catch (error) { results.innerHTML = `<p class="skill-empty skill-error">搜索失败: ${escapeHtml(error.message)}</p>`; }
+}
+
+function renderSkillSearchResults(results) {
+    const container = document.getElementById('skill-search-results');
+    if (!results.length) { container.innerHTML = '<div class="skill-empty-panel"><strong>没有找到匹配的公开技能</strong><span>调整关键词，或检查来源设置中的启用状态。</span></div>'; return; }
+    container.innerHTML = results.map(result => `<article class="skill-result-card">
+        <div><div class="skill-result-heading"><h3>${escapeHtml(result.name)}</h3><span>${escapeHtml(result.source_id)}</span></div><p>${escapeHtml(result.description || '未提供描述')}</p><div class="skill-card-meta"><span>${escapeHtml(result.author || '未知作者')}</span><span>${result.popularity == null ? '无热度数据' : `热度 ${formatNumber(result.popularity)}`}</span><span>${escapeHtml(result.license || '许可证未知')}</span></div></div>
+        <div class="skill-result-actions"><a href="${escapeAttr(result.source_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-small">来源</a><button class="btn btn-primary btn-small" type="button" onclick="previewRemoteSkill('${escapeAttr(result.source_id)}', '${escapeAttr(result.download_locator)}', '${escapeAttr(result.version || '')}')">预览导入</button></div>
+    </article>`).join('');
+}
+
+async function previewRemoteSkill(sourceId, archiveUrl, version) {
+    try {
+        const response = await fetch(`${API_BASE}/skill-sources/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source_id: sourceId, archive_url: archiveUrl, version: version || null }) });
+        if (!response.ok) throw new Error(await readSkillApiError(response));
+        showSkillImportPreview(await response.json(), '公开技能预览');
+    } catch (error) { showToast(`远端预览失败: ${error.message}`, 'error'); }
+}
+
+async function loadSkillSources() {
+    const container = document.getElementById('skill-source-list');
+    if (!container) return;
+    container.innerHTML = '<p class="skill-empty">正在读取来源设置...</p>';
+    try {
+        const response = await fetch(`${API_BASE}/skill-sources`);
+        if (!response.ok) throw new Error(await readSkillApiError(response));
+        currentSkillSources = await response.json();
+        renderSkillSources();
+    } catch (error) { container.innerHTML = `<p class="skill-empty skill-error">加载失败: ${escapeHtml(error.message)}</p>`; }
+}
+
+function renderSkillSources() {
+    const container = document.getElementById('skill-source-list');
+    if (!currentSkillSources.length) {
+        container.innerHTML = '<div class="skill-empty-panel"><strong>尚未配置公开来源</strong><span>添加 GitHub、SkillHub 预置来源后即可开始联网搜索。</span><button class="btn btn-secondary btn-small" type="button" onclick="restoreDefaultSkillSources()">添加预置来源</button></div>';
+        return;
+    }
+    container.innerHTML = currentSkillSources.map((source, index) => `<article class="skill-source-card" data-source-index="${index}">
+        <div class="skill-source-card-title"><input class="source-enabled" type="checkbox" ${source.enabled ? 'checked' : ''} aria-label="启用 ${escapeAttr(source.name)}"><strong>${escapeHtml(source.name)}</strong><span class="source-status ${source.last_status && source.last_status !== 'available' ? 'error' : 'available'}">${escapeHtml(source.last_status || '未检测')}</span></div>
+        <div class="skill-source-fields"><label>名称<input class="source-name" value="${escapeAttr(source.name)}"></label><label>类型<select class="source-type" ${source.source_type !== 'custom_index' ? 'disabled' : ''}><option value="custom_index" selected>自定义公开索引</option></select></label><label>HTTPS 地址<input class="source-url" type="url" value="${escapeAttr(source.url)}"></label></div>
+        ${source.source_type === 'custom_index' ? `<button class="btn btn-danger btn-small" type="button" onclick="removeSkillSource(${index})">移除</button>` : ''}
+    </article>`).join('');
+}
+
+function restoreDefaultSkillSources() { currentSkillSources = defaultSkillSources.map(source => ({ ...source })); renderSkillSources(); }
+function addCustomSkillSource() {
+    currentSkillSources.push({ id: `custom-${Date.now()}`, name: '自定义公开索引', source_type: 'custom_index', url: '', enabled: true, last_status: null, last_checked_at: null });
+    renderSkillSources();
+}
+function removeSkillSource(index) { currentSkillSources.splice(index, 1); renderSkillSources(); }
+
+async function saveSkillSources() {
+    const cards = [...document.querySelectorAll('.skill-source-card')];
+    const sources = cards.map((card, index) => ({
+        ...currentSkillSources[index],
+        enabled: card.querySelector('.source-enabled').checked,
+        name: card.querySelector('.source-name').value.trim(),
+        url: card.querySelector('.source-url').value.trim(),
+    }));
+    try {
+        const response = await fetch(`${API_BASE}/skill-sources`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sources) });
+        if (!response.ok) throw new Error(await readSkillApiError(response));
+        currentSkillSources = await response.json();
+        renderSkillSources();
+        showToast('来源设置已保存', 'success');
+    } catch (error) { showToast(`保存失败: ${error.message}`, 'error'); }
 }
