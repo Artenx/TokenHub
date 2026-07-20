@@ -38,8 +38,33 @@ fn extract_streamed_text(raw: &str) -> Option<String> {
     (!output.is_empty()).then_some(output)
 }
 
+fn usage_total(value: &Value) -> Option<u64> {
+    let usage = value.get("usage")
+        .or_else(|| value.get("message").and_then(|message| message.get("usage")))
+        .or_else(|| value.get("response").and_then(|response| response.get("usage")))?;
+    usage.get("total_tokens").and_then(Value::as_u64)
+        .or_else(|| usage.get("input_tokens").and_then(Value::as_u64).zip(usage.get("output_tokens").and_then(Value::as_u64)).map(|(input, output)| input + output))
+        .or_else(|| usage.get("prompt_tokens").and_then(Value::as_u64).zip(usage.get("completion_tokens").and_then(Value::as_u64)).map(|(input, output)| input + output))
+}
+
 fn response_tokens(raw: &str) -> Option<u64> {
-    serde_json::from_str::<Value>(raw).ok()?.get("usage")?.get("total_tokens").and_then(Value::as_u64)
+    if let Ok(response) = serde_json::from_str::<Value>(raw) {
+        return usage_total(&response);
+    }
+
+    let mut total = None;
+    let mut input = None;
+    let mut output = None;
+    for event in raw.lines().filter_map(|line| line.strip_prefix("data:").map(str::trim)).filter_map(|line| serde_json::from_str::<Value>(line).ok()) {
+        total = usage_total(&event).or(total);
+        if let Some(usage) = event.get("usage")
+            .or_else(|| event.get("message").and_then(|message| message.get("usage")))
+            .or_else(|| event.get("response").and_then(|response| response.get("usage"))) {
+            input = usage.get("input_tokens").and_then(Value::as_u64).or(input).or_else(|| usage.get("prompt_tokens").and_then(Value::as_u64));
+            output = usage.get("output_tokens").and_then(Value::as_u64).or(output).or_else(|| usage.get("completion_tokens").and_then(Value::as_u64));
+        }
+    }
+    total.or_else(|| input.zip(output).map(|(input, output)| input + output))
 }
 
 fn benchmark_url(endpoint: &EndpointConfig) -> String {
@@ -79,7 +104,10 @@ pub async fn execute_benchmark_run(state: &AppState, run_id: &str) {
             let Some(endpoint) = run.endpoint_snapshots.iter().find(|endpoint| endpoint.id == target.endpoint_id).cloned() else { continue; };
             for attempt_number in 1..=run.attempts_per_case {
                 if matches!(state.get_model_benchmark(run_id).map(|r| r.status), Some(ModelBenchmarkStatus::Cancelled)) { return; }
-                let request = json!({"model": target.model, "messages": case.messages.clone(), "stream": true});
+                let mut request = json!({"model": target.model, "messages": case.messages.clone(), "stream": true});
+                if matches!(endpoint.api_type, ApiType::OpenAI | ApiType::Custom) {
+                    request["stream_options"] = json!({"include_usage": true});
+                }
                 let (status, status_code, ttft_ms, duration_ms, output, total_tokens, error_message) = call_endpoint(state, &endpoint, request).await;
                 let (output, output_truncated) = truncate_body(output);
                 let attempt_id = uuid::Uuid::new_v4().to_string();
@@ -125,5 +153,13 @@ mod tests {
     fn extract_streamed_text_joins_openai_deltas() {
         let raw = "data: {\"choices\":[{\"delta\":{\"content\":\"Hello \"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"world\"}}]}\n\ndata: [DONE]\n";
         assert_eq!(extract_streamed_text(raw), Some("Hello world".to_string()));
+    }
+
+    #[test]
+    fn response_tokens_reads_openai_and_anthropic_stream_usage() {
+        let openai = "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\ndata: {\"choices\":[],\"usage\":{\"total_tokens\":12}}\n\ndata: [DONE]\n";
+        let anthropic = "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":7}}}\n\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":5}}\n";
+        assert_eq!(response_tokens(openai), Some(12));
+        assert_eq!(response_tokens(anthropic), Some(12));
     }
 }
