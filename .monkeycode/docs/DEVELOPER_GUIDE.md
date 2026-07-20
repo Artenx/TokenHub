@@ -34,9 +34,11 @@ cargo check
 
 本地技能包服务位于 `src/skill_repository.rs`。归档预览和本地扫描统一校验 `SKILL.md`、相对路径、符号链接、单文件容量、总容量和文件数量。导入操作先写入同级临时目录，再通过重命名提交目标目录。
 
+公开来源适配器位于 `src/skill_sources.rs`。适配器以统一 `SkillSourceAdapter` 接口提供搜索能力；GitHub 使用公开代码搜索，SkillHub 使用 `https://api.skillhub.cn/api/skills`，自定义来源使用 JSON 文档中的 `skills` 数组。聚合搜索会隔离单个来源的超时和协议错误。
+
 ## 测试
 
-单元测试与相应模块共同维护，状态层测试位于 `src/state.rs`，本地技能包服务测试位于 `src/skill_repository.rs`。提交前运行：
+单元测试与相应模块共同维护，状态层测试位于 `src/state.rs`，本地技能包服务测试位于 `src/skill_repository.rs`，公开来源适配器测试位于 `src/skill_sources.rs`。提交前运行：
 
 ```bash
 cargo test

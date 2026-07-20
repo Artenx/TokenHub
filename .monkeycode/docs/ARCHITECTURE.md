@@ -6,7 +6,7 @@ TokenHub 是一个面向大语言模型 API 的端点池代理服务。客户端
 
 管理后台提供端点、端点池、对外 API、调用日志、数据回放、模型评测和运行监控。运行期状态、回放记录和评测结果分别持久化，避免单一状态文件承担全部写入负载。
 
-技能仓库已具备本地服务层：`SkillRepositoryConfig` 保存本地仓库限制，`SkillRepositoryState` 保存公开来源、本地技能元数据和审计记录。`skill_repository.rs` 负责 ZIP 归档预览、`SKILL.md` 校验、本地扫描、原子导入、替换恢复和删除确认；公开搜索与管理 API 将在后续任务中实现。
+技能仓库已具备本地服务层和公开搜索适配器：`SkillRepositoryConfig` 保存本地仓库限制，`SkillRepositoryState` 保存公开来源、本地技能元数据和审计记录。`skill_repository.rs` 负责 ZIP 归档预览、`SKILL.md` 校验、本地扫描、原子导入、替换恢复和删除确认；`skill_sources.rs` 提供 GitHub、SkillHub 与自定义 JSON 索引的匿名搜索。管理 API 将在后续任务中实现。
 
 ## 技术栈
 
@@ -31,6 +31,7 @@ TokenHub/
 │   ├── converter.rs   # API 格式转换
 │   ├── benchmark.rs   # 模型评测执行器
 │   ├── skill_repository.rs # 本地技能包服务
+│   ├── skill_sources.rs # 公开技能来源适配器
 │   ├── auth.rs        # 管理和对外 API 鉴权
 │   ├── config.rs      # TOML 配置管理
 │   ├── validator.rs   # 管理输入校验
@@ -71,6 +72,12 @@ TokenHub/
 位置：`src/skill_repository.rs`
 
 该服务以 ZIP 归档导入为输入，要求归档包含唯一根目录 `SKILL.md`。服务拒绝路径穿越、符号链接、超出文件数量或容量限制的内容；导入使用同一仓库目录内的临时目录和重命名操作，替换时先保留备份以支持失败恢复。
+
+### 公开技能来源
+
+位置：`src/skill_sources.rs`
+
+来源适配器统一返回 `SkillSearchResult`。GitHub 适配器通过公开代码搜索定位 `SKILL.md`；SkillHub 适配器使用 `https://api.skillhub.cn/api/skills`；自定义来源使用 JSON 索引。聚合搜索并发执行启用来源，并保留来源级错误以隔离单个来源故障。
 
 ## 请求流程
 

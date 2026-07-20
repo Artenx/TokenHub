@@ -8,6 +8,7 @@ mod models;
 mod proxy;
 mod scheduler;
 mod skill_repository;
+mod skill_sources;
 mod state;
 mod validator;
 
