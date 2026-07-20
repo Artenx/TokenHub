@@ -76,6 +76,14 @@ pub fn scan_local_skills(root: &Path, config: &SkillRepositoryConfig) -> Result<
     Ok(skills)
 }
 
+pub fn list_skill_files(root: &Path, directory_name: &str, config: &SkillRepositoryConfig) -> Result<Vec<String>> {
+    if !is_safe_directory_name(directory_name) {
+        bail!("技能目录名称无效");
+    }
+    let package = read_skill_directory(&root.join(directory_name), config)?;
+    Ok(package.files.into_iter().map(|file| file.relative_path.to_string_lossy().to_string()).collect())
+}
+
 pub fn preview_zip_archive(
     archive: &[u8],
     source: SkillOrigin,

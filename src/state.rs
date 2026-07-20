@@ -1,4 +1,5 @@
 use crate::models::*;
+use crate::skill_repository::PreparedSkillPackage;
 use chrono::Utc;
 use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -67,6 +68,8 @@ pub struct AppState {
     pub skill_repository: RwLock<SkillRepositoryState>,
     /// 待确认的导入预览，仅保存在内存中
     pub skill_import_previews: RwLock<HashMap<String, SkillImportPreview>>,
+    /// 预览对应的已校验包内容，仅在预览有效期内保存在内存中
+    pub prepared_skill_packages: RwLock<HashMap<String, PreparedSkillPackage>>,
     /// 技能仓库独立持久化文件路径
     pub skill_repository_state_path: PathBuf,
 }
@@ -114,6 +117,7 @@ impl AppState {
             model_benchmark_state_path,
             skill_repository: RwLock::new(SkillRepositoryState::default()),
             skill_import_previews: RwLock::new(HashMap::new()),
+            prepared_skill_packages: RwLock::new(HashMap::new()),
             skill_repository_state_path,
         };
 
@@ -1242,7 +1246,8 @@ impl AppState {
         self.mark_dirty();
     }
 
-    pub fn store_skill_import_preview(&self, preview: SkillImportPreview) {
+    pub fn store_skill_import_preview(&self, preview: SkillImportPreview, package: PreparedSkillPackage) {
+        self.prepared_skill_packages.write().insert(preview.id.clone(), package);
         self.skill_import_previews.write().insert(preview.id.clone(), preview);
     }
 
@@ -1250,7 +1255,18 @@ impl AppState {
         let now = Utc::now();
         let mut previews = self.skill_import_previews.write();
         previews.retain(|_, preview| preview.expires_at > now);
+        self.prepared_skill_packages.write().retain(|id, _| previews.contains_key(id));
         previews.get(id).cloned()
+    }
+
+    pub fn get_prepared_skill_package(&self, id: &str) -> Option<PreparedSkillPackage> {
+        self.get_skill_import_preview(id)?;
+        self.prepared_skill_packages.read().get(id).cloned()
+    }
+
+    pub fn remove_skill_import_preview(&self, id: &str) {
+        self.skill_import_previews.write().remove(id);
+        self.prepared_skill_packages.write().remove(id);
     }
 
     pub async fn load_skill_repository_state(&self) {
@@ -1849,10 +1865,13 @@ exposed_apis = []
             validation_message: None,
             conflict: false,
             expires_at: Utc::now() - chrono::Duration::seconds(1),
+        }, PreparedSkillPackage {
+            directory_name: "example-skill".to_string(), name: "Example".to_string(), description: String::new(), skill_md_summary: String::new(), files: Vec::new(),
         });
 
         assert!(state.get_skill_import_preview("expired-preview").is_none());
         assert!(state.skill_import_previews.read().is_empty());
+        assert!(state.prepared_skill_packages.read().is_empty());
     }
 
     #[test]

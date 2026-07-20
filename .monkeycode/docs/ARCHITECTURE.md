@@ -6,7 +6,7 @@ TokenHub 是一个面向大语言模型 API 的端点池代理服务。客户端
 
 管理后台提供端点、端点池、对外 API、调用日志、数据回放、模型评测和运行监控。运行期状态、回放记录和评测结果分别持久化，避免单一状态文件承担全部写入负载。
 
-技能仓库已具备本地服务层和公开搜索适配器：`SkillRepositoryConfig` 保存本地仓库限制，`SkillRepositoryState` 保存公开来源、本地技能元数据和审计记录。`skill_repository.rs` 负责 ZIP 归档预览、`SKILL.md` 校验、本地扫描、原子导入、替换恢复和删除确认；`skill_sources.rs` 提供 GitHub、SkillHub 与自定义 JSON 索引的匿名搜索。管理 API 将在后续任务中实现。
+技能仓库已具备本地服务层、公开搜索适配器和管理员管理 API：`SkillRepositoryConfig` 保存本地仓库限制，`SkillRepositoryState` 保存公开来源、本地技能元数据和审计记录。`skill_repository.rs` 负责 ZIP 归档预览、`SKILL.md` 校验、本地扫描、原子导入、替换恢复和删除确认；`skill_sources.rs` 提供 GitHub、SkillHub 与自定义 JSON 索引的匿名搜索；`admin.rs` 负责本地技能、导入预览、来源搜索与来源配置接口。
 
 ## 技术栈
 
@@ -59,7 +59,7 @@ TokenHub/
 
 位置：`src/state.rs`、`src/models.rs`、`src/config.rs`
 
-`AppState` 通过读写锁维护端点、日志、回放、评测和技能仓库状态。`config.toml` 保存长期配置；`state.json`、`replay_state.json`、`model_benchmarks.json` 和 `skill_repository.json` 保存独立运行状态。
+`AppState` 通过读写锁维护端点、日志、回放、评测和技能仓库状态。`config.toml` 保存长期配置；`state.json`、`replay_state.json`、`model_benchmarks.json` 和 `skill_repository.json` 保存独立运行状态。已确认的技能包内容仅在导入预览有效期内驻留内存。
 
 ### 模型评测层
 

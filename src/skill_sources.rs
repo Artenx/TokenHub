@@ -14,7 +14,7 @@ pub trait SkillSourceAdapter: Send + Sync {
     fn search<'a>(&'a self, keyword: &'a str, limit: usize) -> BoxFuture<'a, Result<Vec<SkillSearchResult>>>;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SourceSearchOutcome {
     pub source_id: String,
     pub results: Vec<SkillSearchResult>,

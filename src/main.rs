@@ -244,6 +244,17 @@ async fn main() -> std::io::Result<()> {
             .route("/admin/api/model-benchmarks/candidates", web::get().to(admin::list_model_benchmark_candidates))
             .route("/admin/api/model-benchmarks/{id}", web::get().to(admin::get_model_benchmark))
             .route("/admin/api/model-benchmarks/{id}/cancel", web::post().to(admin::cancel_model_benchmark))
+            // 技能仓库
+            .route("/admin/api/skills", web::get().to(admin::list_skills))
+            .route("/admin/api/skills/upload-preview", web::post().to(admin::preview_skill_upload))
+            .route("/admin/api/skills/import", web::post().to(admin::import_skill))
+            .route("/admin/api/skills/{id}/replace", web::post().to(admin::replace_skill))
+            .route("/admin/api/skills/{id}", web::get().to(admin::get_skill))
+            .route("/admin/api/skills/{id}", web::delete().to(admin::delete_skill))
+            .route("/admin/api/skill-sources/search", web::get().to(admin::search_skill_sources))
+            .route("/admin/api/skill-sources/preview", web::post().to(admin::preview_remote_skill))
+            .route("/admin/api/skill-sources", web::get().to(admin::list_skill_sources))
+            .route("/admin/api/skill-sources", web::put().to(admin::update_skill_sources))
             // 静态文件（管理后台前端）
             .service(fs::Files::new("/admin", "static").index_file("index.html"))
             // 常见浏览器请求处理

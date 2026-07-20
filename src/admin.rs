@@ -1,11 +1,43 @@
 use crate::auth::check_admin_auth;
 use crate::error::AppError;
 use crate::models::*;
+use crate::skill_repository::{delete_skill_package, import_skill_package, list_skill_files, preview_zip_archive, repository_root, scan_local_skills};
+use crate::skill_sources::{adapters_for_sources, search_sources};
 use crate::state::AppState;
 use crate::validator::InputValidator;
 use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::Utc;
+use reqwest::{redirect::Policy, Url};
 use serde_json::json;
+
+#[derive(serde::Deserialize)]
+pub struct SkillImportRequest {
+    preview_id: String,
+    #[serde(default)]
+    replace: bool,
+}
+
+#[derive(serde::Deserialize)]
+pub struct DeleteSkillRequest {
+    confirmation: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct SkillSourceSearchQuery {
+    keyword: String,
+    #[serde(default = "default_skill_search_limit")]
+    limit: usize,
+}
+
+fn default_skill_search_limit() -> usize { 20 }
+
+#[derive(serde::Deserialize)]
+pub struct RemoteSkillPreviewRequest {
+    source_id: String,
+    archive_url: String,
+    #[serde(default)]
+    version: Option<String>,
+}
 
 /// 获取所有端点
 pub async fn list_endpoints(
@@ -1208,11 +1240,217 @@ pub async fn list_model_benchmark_candidates(state: web::Data<AppState>, req: Ht
     Ok(HttpResponse::Ok().json(candidates))
 }
 
+fn skill_repository_root(state: &AppState) -> Result<(std::path::PathBuf, SkillRepositoryConfig), AppError> {
+    let config = state.config.read().skill_repository.clone();
+    let root = repository_root(&state.config_manager.config_dir(), &config)
+        .map_err(|error| AppError::BadRequest(error.to_string()))?;
+    Ok((root, config))
+}
+
+fn refresh_local_skills(state: &AppState) -> Result<Vec<LocalSkill>, AppError> {
+    let (root, config) = skill_repository_root(state)?;
+    let mut skills = scan_local_skills(&root, &config).map_err(|error| AppError::Internal(error.to_string()))?;
+    let previous = state.skill_repository_state();
+    for skill in &mut skills {
+        if let Some(saved) = previous.skills.iter().find(|saved| saved.directory_name == skill.directory_name) {
+            skill.source = saved.source.clone();
+            skill.imported_at = saved.imported_at;
+        }
+    }
+    let mut repository = previous;
+    repository.skills = skills.clone();
+    state.update_skill_repository_state(repository);
+    Ok(skills)
+}
+
+fn add_skill_audit(state: &AppState, operation: &str, directory_name: &str, source: Option<SkillOrigin>, status: &str, error_message: Option<String>) {
+    state.add_skill_audit_entry(SkillAuditEntry {
+        id: uuid::Uuid::new_v4().to_string(),
+        operation: operation.to_string(),
+        directory_name: directory_name.to_string(),
+        source,
+        created_at: Utc::now(),
+        status: status.to_string(),
+        error_message,
+    });
+}
+
+pub async fn list_skills(state: web::Data<AppState>, req: HttpRequest) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    Ok(HttpResponse::Ok().json(refresh_local_skills(state.get_ref())?))
+}
+
+pub async fn get_skill(state: web::Data<AppState>, req: HttpRequest, path: web::Path<String>) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    let id = path.into_inner();
+    let skill = refresh_local_skills(state.get_ref())?.into_iter()
+        .find(|skill| skill.id == id)
+        .ok_or_else(|| AppError::NotFound("技能包不存在".to_string()))?;
+    let (root, config) = skill_repository_root(state.get_ref())?;
+    let skill_md = std::fs::read_to_string(root.join(&skill.directory_name).join("SKILL.md"))
+        .map_err(|error| AppError::Internal(format!("读取 SKILL.md 失败: {}", error)))?;
+    let files = list_skill_files(&root, &skill.directory_name, &config)
+        .map_err(|error| AppError::Internal(error.to_string()))?;
+    Ok(HttpResponse::Ok().json(json!({ "skill": skill, "skill_md": skill_md, "files": files })))
+}
+
+pub async fn preview_skill_upload(state: web::Data<AppState>, req: HttpRequest, archive: web::Bytes) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    let (root, config) = skill_repository_root(state.get_ref())?;
+    let source = SkillOrigin { source_type: SkillSourceType::CustomIndex, url: "local-upload".to_string(), version: None, content_digest: None };
+    let (preview, package) = preview_zip_archive(&archive, source, &root, &config)
+        .map_err(|error| AppError::BadRequest(error.to_string()))?;
+    state.store_skill_import_preview(preview.clone(), package);
+    Ok(HttpResponse::Ok().json(preview))
+}
+
+async fn import_preview(state: &AppState, input: SkillImportRequest, force_replace: bool) -> Result<HttpResponse, AppError> {
+    let preview = state.get_skill_import_preview(&input.preview_id)
+        .ok_or_else(|| AppError::NotFound("导入预览不存在或已过期".to_string()))?;
+    if !preview.valid {
+        return Err(AppError::BadRequest(preview.validation_message.unwrap_or_else(|| "导入预览校验失败".to_string())));
+    }
+    let package = state.get_prepared_skill_package(&input.preview_id)
+        .ok_or_else(|| AppError::NotFound("导入预览内容不存在或已过期".to_string()))?;
+    let (root, _) = skill_repository_root(state)?;
+    let replace = force_replace || input.replace;
+    if preview.conflict && !replace {
+        return Err(AppError::BadRequest("目标技能已存在，请明确选择替换".to_string()));
+    }
+    let operation = if replace { "replace" } else { "import" };
+    if let Err(error) = import_skill_package(&root, &package, replace) {
+        let message = error.to_string();
+        add_skill_audit(state, operation, &preview.target_directory_name, Some(preview.source), "failed", Some(message.clone()));
+        return Err(AppError::Internal(message));
+    }
+    let mut skills = refresh_local_skills(state)?;
+    let imported_at = Utc::now();
+    if let Some(skill) = skills.iter_mut().find(|skill| skill.directory_name == preview.target_directory_name) {
+        skill.source = Some(preview.source.clone());
+        skill.imported_at = Some(imported_at);
+    }
+    let mut repository = state.skill_repository_state();
+    repository.skills = skills;
+    state.update_skill_repository_state(repository);
+    add_skill_audit(state, operation, &preview.target_directory_name, Some(preview.source), "success", None);
+    state.remove_skill_import_preview(&input.preview_id);
+    Ok(HttpResponse::Ok().json(json!({ "success": true, "directory_name": preview.target_directory_name })))
+}
+
+pub async fn import_skill(state: web::Data<AppState>, req: HttpRequest, body: web::Json<SkillImportRequest>) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    import_preview(state.get_ref(), body.into_inner(), false).await
+}
+
+pub async fn replace_skill(state: web::Data<AppState>, req: HttpRequest, path: web::Path<String>, body: web::Json<SkillImportRequest>) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    let input = body.into_inner();
+    let preview = state.get_skill_import_preview(&input.preview_id)
+        .ok_or_else(|| AppError::NotFound("导入预览不存在或已过期".to_string()))?;
+    if preview.target_directory_name != path.into_inner() {
+        return Err(AppError::BadRequest("替换目标与导入预览不一致".to_string()));
+    }
+    import_preview(state.get_ref(), input, true).await
+}
+
+pub async fn delete_skill(state: web::Data<AppState>, req: HttpRequest, path: web::Path<String>, body: web::Json<DeleteSkillRequest>) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    let directory_name = path.into_inner();
+    let (root, _) = skill_repository_root(state.get_ref())?;
+    if let Err(error) = delete_skill_package(&root, &directory_name, &body.confirmation) {
+        let message = error.to_string();
+        add_skill_audit(state.get_ref(), "delete", &directory_name, None, "failed", Some(message.clone()));
+        return Err(AppError::BadRequest(message));
+    }
+    refresh_local_skills(state.get_ref())?;
+    add_skill_audit(state.get_ref(), "delete", &directory_name, None, "success", None);
+    Ok(HttpResponse::Ok().json(json!({ "success": true })))
+}
+
+pub async fn search_skill_sources(state: web::Data<AppState>, req: HttpRequest, query: web::Query<SkillSourceSearchQuery>) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    let query = query.into_inner();
+    if query.keyword.trim().is_empty() {
+        return Err(AppError::BadRequest("搜索关键词不能为空".to_string()));
+    }
+    let sources = state.skill_repository_state().sources;
+    let adapters = adapters_for_sources(&sources).map_err(|error| AppError::BadRequest(error.to_string()))?;
+    let outcomes = search_sources(&adapters, &query.keyword, query.limit.clamp(1, 100)).await;
+    let mut repository = state.skill_repository_state();
+    for source in &mut repository.sources {
+        if let Some(outcome) = outcomes.iter().find(|outcome| outcome.source_id == source.id) {
+            source.last_checked_at = Some(Utc::now());
+            source.last_status = outcome.error.clone().or_else(|| Some("available".to_string()));
+        }
+    }
+    state.update_skill_repository_state(repository.clone());
+    Ok(HttpResponse::Ok().json(json!({ "sources": repository.sources, "outcomes": outcomes })))
+}
+
+pub async fn list_skill_sources(state: web::Data<AppState>, req: HttpRequest) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    Ok(HttpResponse::Ok().json(state.skill_repository_state().sources))
+}
+
+pub async fn update_skill_sources(state: web::Data<AppState>, req: HttpRequest, body: web::Json<Vec<SkillSourceConfig>>) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    let sources = body.into_inner();
+    let mut ids = std::collections::HashSet::new();
+    for source in &sources {
+        if source.id.trim().is_empty() || !ids.insert(source.id.clone()) || source.name.trim().is_empty() {
+            return Err(AppError::BadRequest("来源标识和名称必须唯一且非空".to_string()));
+        }
+        let url = Url::parse(&source.url).map_err(|_| AppError::BadRequest(format!("来源地址无效: {}", source.name)))?;
+        if url.scheme() != "https" || url.host_str().is_none() {
+            return Err(AppError::BadRequest(format!("来源地址必须使用 HTTPS: {}", source.name)));
+        }
+    }
+    let mut repository = state.skill_repository_state();
+    repository.sources = sources;
+    state.update_skill_repository_state(repository.clone());
+    Ok(HttpResponse::Ok().json(repository.sources))
+}
+
+pub async fn preview_remote_skill(state: web::Data<AppState>, req: HttpRequest, body: web::Json<RemoteSkillPreviewRequest>) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    let input = body.into_inner();
+    let source = state.skill_repository_state().sources.into_iter()
+        .find(|source| source.id == input.source_id && source.enabled)
+        .ok_or_else(|| AppError::NotFound("公开来源不存在或未启用".to_string()))?;
+    let archive_url = Url::parse(&input.archive_url).map_err(|_| AppError::BadRequest("技能包下载地址无效".to_string()))?;
+    if archive_url.scheme() != "https" || archive_url.host_str().is_none() {
+        return Err(AppError::BadRequest("技能包下载地址必须使用 HTTPS".to_string()));
+    }
+    let source_host = Url::parse(&source.url).ok().and_then(|url| url.host_str().map(str::to_string));
+    let permitted = archive_url.host_str() == source_host.as_deref()
+        || matches!(source.source_type, SkillSourceType::Github) && matches!(archive_url.host_str(), Some("github.com") | Some("codeload.github.com"));
+    if !permitted {
+        return Err(AppError::BadRequest("技能包下载地址不属于所选公开来源".to_string()));
+    }
+    let client = reqwest::Client::builder().redirect(Policy::none()).timeout(std::time::Duration::from_secs(30)).build()
+        .map_err(|error| AppError::Internal(error.to_string()))?;
+    let response = client.get(archive_url.clone()).send().await.map_err(|error| AppError::BadRequest(format!("下载技能包失败: {}", error)))?;
+    if !response.status().is_success() {
+        return Err(AppError::BadRequest(format!("下载技能包失败: HTTP {}", response.status())));
+    }
+    let (root, config) = skill_repository_root(state.get_ref())?;
+    if response.content_length().is_some_and(|size| size > config.max_total_size_bytes) {
+        return Err(AppError::BadRequest("技能包下载内容超过总容量上限".to_string()));
+    }
+    let archive = response.bytes().await.map_err(|error| AppError::BadRequest(format!("读取技能包失败: {}", error)))?;
+    let origin = SkillOrigin { source_type: source.source_type, url: archive_url.to_string(), version: input.version, content_digest: None };
+    let (preview, package) = preview_zip_archive(&archive, origin, &root, &config).map_err(|error| AppError::BadRequest(error.to_string()))?;
+    state.store_skill_import_preview(preview.clone(), package);
+    Ok(HttpResponse::Ok().json(preview))
+}
+
 #[cfg(test)]
 mod benchmark_tests {
     use super::*;
+    use actix_web::body::to_bytes;
     use actix_web::cookie::Cookie;
     use actix_web::test::TestRequest;
+    use std::io::{Cursor, Write};
     use tempfile::TempDir;
 
     async fn state() -> web::Data<AppState> {
@@ -1230,6 +1468,16 @@ mod benchmark_tests {
         TestRequest::default().cookie(Cookie::new("admin_session", token)).to_http_request()
     }
 
+    fn skill_archive(directory_name: &str) -> web::Bytes {
+        let cursor = Cursor::new(Vec::new());
+        let mut archive = zip::ZipWriter::new(cursor);
+        archive.start_file(format!("{}/SKILL.md", directory_name), zip::write::FileOptions::default()).unwrap();
+        archive.write_all(b"---\nname: Example\ndescription: Example skill\n---\n# Example").unwrap();
+        archive.start_file(format!("{}/README.md", directory_name), zip::write::FileOptions::default()).unwrap();
+        archive.write_all(b"Details").unwrap();
+        web::Bytes::from(archive.finish().unwrap().into_inner())
+    }
+
     #[actix_rt::test]
     async fn model_benchmark_list_requires_admin_session() {
         let state = state().await;
@@ -1242,5 +1490,58 @@ mod benchmark_tests {
         let req = authenticated_request(state.get_ref());
         let input = CreateModelBenchmarkRequest { targets: Vec::new(), cases: Vec::new(), judge: BenchmarkJudgeConfig { endpoint_id: String::new(), model: String::new(), rubric: String::new() } };
         assert!(create_model_benchmark(state, req, web::Json(input)).await.is_err());
+    }
+
+    #[actix_rt::test]
+    async fn skill_list_requires_admin_session() {
+        let state = state().await;
+        assert!(list_skills(state, TestRequest::default().to_http_request()).await.is_err());
+    }
+
+    #[actix_rt::test]
+    async fn skill_upload_preview_requires_confirmation_and_detects_conflicts() {
+        let state = state().await;
+        let response = preview_skill_upload(state.clone(), authenticated_request(state.get_ref()), skill_archive("example"))
+            .await.unwrap();
+        let preview: SkillImportPreview = serde_json::from_slice(&to_bytes(response.into_body()).await.unwrap()).unwrap();
+        assert!(!preview.conflict);
+
+        import_skill(state.clone(), authenticated_request(state.get_ref()), web::Json(SkillImportRequest { preview_id: preview.id, replace: false }))
+            .await.unwrap();
+        let skills = refresh_local_skills(state.get_ref()).unwrap();
+        assert_eq!(skills.len(), 1);
+
+        let response = preview_skill_upload(state.clone(), authenticated_request(state.get_ref()), skill_archive("example"))
+            .await.unwrap();
+        let conflict: SkillImportPreview = serde_json::from_slice(&to_bytes(response.into_body()).await.unwrap()).unwrap();
+        assert!(conflict.conflict);
+        assert!(import_skill(state.clone(), authenticated_request(state.get_ref()), web::Json(SkillImportRequest { preview_id: conflict.id, replace: false }))
+            .await.is_err());
+    }
+
+    #[actix_rt::test]
+    async fn skill_delete_requires_matching_confirmation() {
+        let state = state().await;
+        let response = preview_skill_upload(state.clone(), authenticated_request(state.get_ref()), skill_archive("example"))
+            .await.unwrap();
+        let preview: SkillImportPreview = serde_json::from_slice(&to_bytes(response.into_body()).await.unwrap()).unwrap();
+        import_skill(state.clone(), authenticated_request(state.get_ref()), web::Json(SkillImportRequest { preview_id: preview.id, replace: false }))
+            .await.unwrap();
+
+        assert!(delete_skill(state.clone(), authenticated_request(state.get_ref()), web::Path::from("example".to_string()), web::Json(DeleteSkillRequest { confirmation: "wrong".to_string() }))
+            .await.is_err());
+        delete_skill(state.clone(), authenticated_request(state.get_ref()), web::Path::from("example".to_string()), web::Json(DeleteSkillRequest { confirmation: "example".to_string() }))
+            .await.unwrap();
+        assert!(refresh_local_skills(state.get_ref()).unwrap().is_empty());
+    }
+
+    #[actix_rt::test]
+    async fn skill_source_configuration_requires_https() {
+        let state = state().await;
+        let sources = vec![SkillSourceConfig {
+            id: "custom".to_string(), name: "Custom".to_string(), source_type: SkillSourceType::CustomIndex,
+            url: "http://example.test/index.json".to_string(), enabled: true, last_status: None, last_checked_at: None,
+        }];
+        assert!(update_skill_sources(state.clone(), authenticated_request(state.get_ref()), web::Json(sources)).await.is_err());
     }
 }

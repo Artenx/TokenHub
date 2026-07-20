@@ -51,9 +51,9 @@
 | `GET` | `/admin/api/model-benchmarks/{id}` | 查询任务详情与汇总。 |
 | `POST` | `/admin/api/model-benchmarks/{id}/cancel` | 取消执行中的任务。 |
 
-## 技能仓库接口规划
+## 技能仓库
 
-技能仓库的数据模型、本地服务与公开来源适配器已实现。下列管理接口等待后续任务注册：
+所有技能仓库接口都需要管理员会话。上传预览接口的请求体为原始 ZIP 字节；导入和替换接口只能引用未过期的预览 ID。
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
@@ -61,4 +61,10 @@
 | `GET` | `/admin/api/skills/{id}` | 查询技能详情与文件清单。 |
 | `POST` | `/admin/api/skills/upload-preview` | 校验上传内容并生成导入预览。 |
 | `POST` | `/admin/api/skills/import` | 确认导入预览。 |
+| `POST` | `/admin/api/skills/{id}/replace` | 用已确认预览替换本地技能包。 |
+| `DELETE` | `/admin/api/skills/{id}` | 使用目录名二次确认后删除技能包。 |
 | `GET` | `/admin/api/skill-sources/search` | 搜索公开技能来源。 |
+| `POST` | `/admin/api/skill-sources/preview` | 下载公开来源归档并生成导入预览。 |
+| `GET`、`PUT` | `/admin/api/skill-sources` | 查询或更新来源配置。 |
+
+来源配置地址必须是 HTTPS。远端预览禁止跨来源下载地址，并禁用 HTTP 重定向；GitHub 允许 `github.com` 与 `codeload.github.com` 的公开归档地址。

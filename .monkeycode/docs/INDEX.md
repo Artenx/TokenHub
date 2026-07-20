@@ -5,7 +5,7 @@
 ## 核心文档
 
 - `ARCHITECTURE.md`：系统模块、请求链路和持久化方式。
-- `INTERFACES.md`：公共接口、管理 API 和技能仓库规划接口。
+- `INTERFACES.md`：公共接口、管理 API 和技能仓库接口。
 - `DEVELOPER_GUIDE.md`：本地运行、状态持久化和开发流程。
 
 ## 规格

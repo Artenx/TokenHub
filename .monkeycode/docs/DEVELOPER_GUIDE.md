@@ -36,9 +36,11 @@ cargo check
 
 公开来源适配器位于 `src/skill_sources.rs`。适配器以统一 `SkillSourceAdapter` 接口提供搜索能力；GitHub 使用公开代码搜索，SkillHub 使用 `https://api.skillhub.cn/api/skills`，自定义来源使用 JSON 文档中的 `skills` 数组。聚合搜索会隔离单个来源的超时和协议错误。
 
+技能仓库管理接口位于 `src/admin.rs`，每个接口先执行管理员会话校验。上传预览接收原始 ZIP 请求体，已校验的包内容与预览 ID 一起存放在内存中，成功导入后立即移除。远端归档预览要求 HTTPS 和来源域名匹配，并使用无重定向 HTTP 客户端。
+
 ## 测试
 
-单元测试与相应模块共同维护，状态层测试位于 `src/state.rs`，本地技能包服务测试位于 `src/skill_repository.rs`，公开来源适配器测试位于 `src/skill_sources.rs`。提交前运行：
+单元测试与相应模块共同维护，状态层测试位于 `src/state.rs`，本地技能包服务测试位于 `src/skill_repository.rs`，公开来源适配器测试位于 `src/skill_sources.rs`，管理接口测试位于 `src/admin.rs`。提交前运行：
 
 ```bash
 cargo test
