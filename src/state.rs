@@ -63,6 +63,12 @@ pub struct AppState {
     pub model_benchmarks: RwLock<Vec<ModelBenchmarkRun>>,
     /// 模型评测独立持久化文件路径
     pub model_benchmark_state_path: PathBuf,
+    /// 技能仓库元数据、来源配置与审计记录
+    pub skill_repository: RwLock<SkillRepositoryState>,
+    /// 待确认的导入预览，仅保存在内存中
+    pub skill_import_previews: RwLock<HashMap<String, SkillImportPreview>>,
+    /// 技能仓库独立持久化文件路径
+    pub skill_repository_state_path: PathBuf,
 }
 
 impl AppState {
@@ -82,6 +88,7 @@ impl AppState {
         let state_path = config_manager.config_dir().join("state.json");
         let replay_state_path = config_manager.config_dir().join(&config.replay.state_file_path);
         let model_benchmark_state_path = config_manager.config_dir().join("model_benchmarks.json");
+        let skill_repository_state_path = config_manager.config_dir().join("skill_repository.json");
         let replay_config = config.replay.clone();
 
         let app = Self {
@@ -105,6 +112,9 @@ impl AppState {
             replay_config: RwLock::new(replay_config),
             model_benchmarks: RwLock::new(Vec::new()),
             model_benchmark_state_path,
+            skill_repository: RwLock::new(SkillRepositoryState::default()),
+            skill_import_previews: RwLock::new(HashMap::new()),
+            skill_repository_state_path,
         };
 
         // 从 state.json 恢复运行时状态
@@ -112,6 +122,7 @@ impl AppState {
         // 从 replay_state.json 恢复回放记录
         app.load_replay_state().await;
         app.load_model_benchmarks().await;
+        app.load_skill_repository_state().await;
 
         Ok(app)
     }
@@ -866,6 +877,9 @@ impl AppState {
         if let Err(e) = self.save_model_benchmarks().await {
             warn!("保存模型评测状态失败: {}", e);
         }
+        if let Err(e) = self.save_skill_repository_state().await {
+            warn!("保存技能仓库状态失败: {}", e);
+        }
 
         Ok(())
     }
@@ -1210,6 +1224,52 @@ impl AppState {
         if let Some(parent) = self.model_benchmark_state_path.parent() { tokio::fs::create_dir_all(parent).await.ok(); }
         tokio::fs::write(&self.model_benchmark_state_path, json).await
             .map_err(|e| anyhow::anyhow!("写入模型评测状态文件失败: {}", e))
+    }
+
+    // ========== 技能仓库状态 ==========
+
+    pub fn skill_repository_state(&self) -> SkillRepositoryState {
+        self.skill_repository.read().clone()
+    }
+
+    pub fn update_skill_repository_state(&self, next: SkillRepositoryState) {
+        *self.skill_repository.write() = next;
+        self.mark_dirty();
+    }
+
+    pub fn add_skill_audit_entry(&self, entry: SkillAuditEntry) {
+        self.skill_repository.write().audit_entries.push(entry);
+        self.mark_dirty();
+    }
+
+    pub fn store_skill_import_preview(&self, preview: SkillImportPreview) {
+        self.skill_import_previews.write().insert(preview.id.clone(), preview);
+    }
+
+    pub fn get_skill_import_preview(&self, id: &str) -> Option<SkillImportPreview> {
+        let now = Utc::now();
+        let mut previews = self.skill_import_previews.write();
+        previews.retain(|_, preview| preview.expires_at > now);
+        previews.get(id).cloned()
+    }
+
+    pub async fn load_skill_repository_state(&self) {
+        let path = &self.skill_repository_state_path;
+        let Ok(content) = tokio::fs::read_to_string(path).await else { return; };
+        match serde_json::from_str::<SkillRepositoryState>(&content) {
+            Ok(repository) => *self.skill_repository.write() = repository,
+            Err(e) => warn!("解析技能仓库状态文件失败: {}", e),
+        }
+    }
+
+    pub async fn save_skill_repository_state(&self) -> anyhow::Result<()> {
+        let json = serde_json::to_string_pretty(&*self.skill_repository.read())
+            .map_err(|e| anyhow::anyhow!("序列化技能仓库状态失败: {}", e))?;
+        if let Some(parent) = self.skill_repository_state_path.parent() {
+            tokio::fs::create_dir_all(parent).await.ok();
+        }
+        tokio::fs::write(&self.skill_repository_state_path, json).await
+            .map_err(|e| anyhow::anyhow!("写入技能仓库状态文件失败: {}", e))
     }
 
     // ========== IP 限流 ==========
@@ -1714,5 +1774,101 @@ exposed_apis = []
         let run = state.cancel_model_benchmark("benchmark-1").unwrap();
         assert_eq!(run.status, ModelBenchmarkStatus::Cancelled);
         assert!(run.completed_at.is_some());
+    }
+
+    fn make_skill_origin() -> SkillOrigin {
+        SkillOrigin {
+            source_type: SkillSourceType::Github,
+            url: "https://github.com/example/skills".to_string(),
+            version: Some("abc123".to_string()),
+            content_digest: Some("sha256:test".to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_skill_repository_state_persists_sources_skills_and_audit_entries() {
+        let tmp = TempDir::new().unwrap();
+        {
+            let state = make_state(&tmp, 5).await;
+            state.update_skill_repository_state(SkillRepositoryState {
+                sources: vec![SkillSourceConfig {
+                    id: "github".to_string(),
+                    name: "GitHub".to_string(),
+                    source_type: SkillSourceType::Github,
+                    url: "https://api.github.com".to_string(),
+                    enabled: true,
+                    last_status: Some("ok".to_string()),
+                    last_checked_at: Some(Utc::now()),
+                }],
+                skills: vec![LocalSkill {
+                    id: "skill-1".to_string(),
+                    directory_name: "example-skill".to_string(),
+                    name: "Example Skill".to_string(),
+                    description: "Example description".to_string(),
+                    skill_md_summary: "Example summary".to_string(),
+                    file_count: 2,
+                    validation_status: "valid".to_string(),
+                    validation_message: None,
+                    source: Some(make_skill_origin()),
+                    imported_at: Some(Utc::now()),
+                }],
+                audit_entries: Vec::new(),
+            });
+            state.add_skill_audit_entry(SkillAuditEntry {
+                id: "audit-1".to_string(),
+                operation: "import".to_string(),
+                directory_name: "example-skill".to_string(),
+                source: Some(make_skill_origin()),
+                created_at: Utc::now(),
+                status: "success".to_string(),
+                error_message: None,
+            });
+            state.save_skill_repository_state().await.unwrap();
+        }
+
+        let reloaded = make_state(&tmp, 5).await;
+        let repository = reloaded.skill_repository_state();
+        assert_eq!(repository.sources.len(), 1);
+        assert_eq!(repository.sources[0].id, "github");
+        assert_eq!(repository.skills.len(), 1);
+        assert_eq!(repository.skills[0].directory_name, "example-skill");
+        assert_eq!(repository.audit_entries.len(), 1);
+        assert_eq!(repository.audit_entries[0].operation, "import");
+    }
+
+    #[tokio::test]
+    async fn test_skill_import_preview_expires_and_is_removed() {
+        let tmp = TempDir::new().unwrap();
+        let state = make_state(&tmp, 5).await;
+        state.store_skill_import_preview(SkillImportPreview {
+            id: "expired-preview".to_string(),
+            target_directory_name: "example-skill".to_string(),
+            source: make_skill_origin(),
+            files: vec!["SKILL.md".to_string()],
+            valid: true,
+            validation_message: None,
+            conflict: false,
+            expires_at: Utc::now() - chrono::Duration::seconds(1),
+        });
+
+        assert!(state.get_skill_import_preview("expired-preview").is_none());
+        assert!(state.skill_import_previews.read().is_empty());
+    }
+
+    #[test]
+    fn test_skill_repository_config_defaults_when_missing_from_toml() {
+        let toml_str = r#"
+listen_addr = "0.0.0.0"
+listen_port = 8080
+admin_password = "x"
+endpoints = []
+pools = []
+exposed_apis = []
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.skill_repository.root_dir, "skills");
+        assert_eq!(config.skill_repository.max_file_count, 500);
+        assert_eq!(config.skill_repository.max_file_size_bytes, 5 * 1024 * 1024);
+        assert_eq!(config.skill_repository.max_total_size_bytes, 50 * 1024 * 1024);
     }
 }

@@ -437,6 +437,151 @@ impl Default for ReplayConfig {
     }
 }
 
+/// 技能仓库配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillRepositoryConfig {
+    /// 技能包根目录，相对于配置文件目录
+    #[serde(default = "default_skill_repository_root")]
+    pub root_dir: String,
+    /// 单个文件允许的最大容量（字节）
+    #[serde(default = "default_skill_max_file_size")]
+    pub max_file_size_bytes: u64,
+    /// 单个技能包允许的最大文件数量
+    #[serde(default = "default_skill_max_file_count")]
+    pub max_file_count: usize,
+    /// 单个技能包允许的最大总容量（字节）
+    #[serde(default = "default_skill_max_total_size")]
+    pub max_total_size_bytes: u64,
+}
+
+fn default_skill_repository_root() -> String { "skills".to_string() }
+fn default_skill_max_file_size() -> u64 { 5 * 1024 * 1024 }
+fn default_skill_max_file_count() -> usize { 500 }
+fn default_skill_max_total_size() -> u64 { 50 * 1024 * 1024 }
+
+impl Default for SkillRepositoryConfig {
+    fn default() -> Self {
+        Self {
+            root_dir: default_skill_repository_root(),
+            max_file_size_bytes: default_skill_max_file_size(),
+            max_file_count: default_skill_max_file_count(),
+            max_total_size_bytes: default_skill_max_total_size(),
+        }
+    }
+}
+
+/// 公开技能来源类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillSourceType {
+    Github,
+    Skillhub,
+    CustomIndex,
+}
+
+/// 公开技能来源配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillSourceConfig {
+    pub id: String,
+    pub name: String,
+    pub source_type: SkillSourceType,
+    pub url: String,
+    pub enabled: bool,
+    #[serde(default)]
+    pub last_status: Option<String>,
+    #[serde(default)]
+    pub last_checked_at: Option<DateTime<Utc>>,
+}
+
+/// 已导入的本地技能元数据
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalSkill {
+    pub id: String,
+    pub directory_name: String,
+    pub name: String,
+    pub description: String,
+    pub skill_md_summary: String,
+    pub file_count: usize,
+    pub validation_status: String,
+    #[serde(default)]
+    pub validation_message: Option<String>,
+    #[serde(default)]
+    pub source: Option<SkillOrigin>,
+    #[serde(default)]
+    pub imported_at: Option<DateTime<Utc>>,
+}
+
+/// 技能包来源信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillOrigin {
+    pub source_type: SkillSourceType,
+    pub url: String,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub content_digest: Option<String>,
+}
+
+/// 公开来源标准化搜索结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillSearchResult {
+    pub source_id: String,
+    pub external_id: String,
+    pub name: String,
+    pub description: String,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub license: Option<String>,
+    #[serde(default)]
+    pub popularity: Option<u64>,
+    #[serde(default)]
+    pub version: Option<String>,
+    pub source_url: String,
+    pub download_locator: String,
+}
+
+/// 待确认导入的技能包预览
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillImportPreview {
+    pub id: String,
+    pub target_directory_name: String,
+    pub source: SkillOrigin,
+    pub files: Vec<String>,
+    pub valid: bool,
+    #[serde(default)]
+    pub validation_message: Option<String>,
+    pub conflict: bool,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// 技能仓库操作审计记录
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillAuditEntry {
+    pub id: String,
+    pub operation: String,
+    pub directory_name: String,
+    #[serde(default)]
+    pub source: Option<SkillOrigin>,
+    pub created_at: DateTime<Utc>,
+    pub status: String,
+    #[serde(default)]
+    pub error_message: Option<String>,
+}
+
+/// 技能仓库独立持久化状态
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SkillRepositoryState {
+    #[serde(default)]
+    pub sources: Vec<SkillSourceConfig>,
+    #[serde(default)]
+    pub skills: Vec<LocalSkill>,
+    #[serde(default)]
+    pub audit_entries: Vec<SkillAuditEntry>,
+}
+
 /// 全局配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -455,6 +600,9 @@ pub struct AppConfig {
     /// 数据回放配置
     #[serde(default)]
     pub replay: ReplayConfig,
+    /// 技能仓库配置
+    #[serde(default)]
+    pub skill_repository: SkillRepositoryConfig,
 }
 
 impl Default for AppConfig {
@@ -467,6 +615,7 @@ impl Default for AppConfig {
             pools: Vec::new(),
             exposed_apis: Vec::new(),
             replay: ReplayConfig::default(),
+            skill_repository: SkillRepositoryConfig::default(),
         }
     }
 }
