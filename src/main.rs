@@ -7,6 +7,7 @@ mod error;
 mod models;
 mod proxy;
 mod scheduler;
+mod skill_repository;
 mod state;
 mod validator;
 

@@ -32,9 +32,11 @@ cargo check
 - `SkillRepositoryState` 保存来源、已导入技能元数据和审计记录。
 - `SkillImportPreview` 仅保存在内存中，读取时自动清理过期预览。
 
+本地技能包服务位于 `src/skill_repository.rs`。归档预览和本地扫描统一校验 `SKILL.md`、相对路径、符号链接、单文件容量、总容量和文件数量。导入操作先写入同级临时目录，再通过重命名提交目标目录。
+
 ## 测试
 
-单元测试与相应模块共同维护，当前状态层测试位于 `src/state.rs` 的测试模块。提交前运行：
+单元测试与相应模块共同维护，状态层测试位于 `src/state.rs`，本地技能包服务测试位于 `src/skill_repository.rs`。提交前运行：
 
 ```bash
 cargo test
