@@ -926,7 +926,6 @@ function renderEndpointsList() {
                     <span class="endpoint-name">${escapeHtml(ep.name)}</span>
                     <div class="endpoint-status">
                         <span class="status-badge ${statusClass}">${statusText}</span>
-                        ${api.replay_enabled ? '<span class="status-badge replay-badge">回放中</span>' : ''}
                     </div>
                 </div>
                 <div class="endpoint-details">
