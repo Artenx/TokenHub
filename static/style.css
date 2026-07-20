@@ -1447,9 +1447,16 @@ nav {
 .benchmark-empty { color: var(--text-tertiary); font-size: 0.8125rem; padding: 1rem; text-align: center; }
 .benchmark-detail-modal { max-width: 1080px; max-height: 88vh; display: flex; flex-direction: column; overflow-y: auto; }
 .benchmark-summary-table { margin-bottom: 1.25rem; }
+.benchmark-highlights { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.625rem; margin-bottom: 1rem; }
+.benchmark-highlights div { padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-secondary); }
+.benchmark-highlights span, .benchmark-highlights strong { display: block; }
+.benchmark-highlights span { color: var(--text-secondary); font-size: 0.6875rem; }
+.benchmark-highlights strong { margin-top: 0.25rem; color: var(--text-primary); font-size: 0.8125rem; }
+.benchmark-rank { display: inline-flex; align-items: center; justify-content: center; width: 1.375rem; height: 1.375rem; border-radius: 999px; background: var(--bg-secondary); font-size: 0.75rem; font-weight: 600; }
 .benchmark-attempts h4 { font-size: 0.875rem; margin-bottom: 0.5rem; }
 .benchmark-case-group { margin-bottom: 1rem; }
 .benchmark-case-group h5 { margin: 0 0 0.5rem; color: var(--text-primary); font-size: 0.8125rem; }
+.benchmark-case-prompt { max-height: 9rem; margin: 0 0 0.625rem; padding: 0.625rem; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-secondary); color: var(--text-secondary); font-family: var(--font-mono); font-size: 0.75rem; line-height: 1.5; white-space: pre-wrap; }
 .benchmark-output-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.75rem; }
 .benchmark-output-card { min-width: 0; padding: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--background); }
 .benchmark-output-header { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.625rem; font-size: 0.8125rem; }
@@ -1461,4 +1468,4 @@ nav {
 .benchmark-judge.missing { background: var(--bg-secondary); color: var(--text-secondary); }
 .benchmark-judge strong { margin: 0 0.5rem; font-size: 0.875rem; }
 .benchmark-judge p { margin: 0.375rem 0 0; line-height: 1.5; }
-@media (max-width: 768px) { .benchmark-form-grid { grid-template-columns: 1fr; } .benchmark-run { flex-direction: column; align-items: flex-start; } .benchmark-output-grid { grid-template-columns: 1fr; } .benchmark-sample-library-header { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 768px) { .benchmark-form-grid { grid-template-columns: 1fr; } .benchmark-run { flex-direction: column; align-items: flex-start; } .benchmark-output-grid { grid-template-columns: 1fr; } .benchmark-highlights { grid-template-columns: 1fr; } .benchmark-sample-library-header { align-items: flex-start; flex-direction: column; } }

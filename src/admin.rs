@@ -1139,6 +1139,12 @@ pub async fn create_model_benchmark(
     if input.targets.len() < 2 || input.cases.is_empty() {
         return Err(AppError::BadRequest("需要选择至少两个端点与模型组合和一条样本".to_string()));
     }
+    let mut case_ids = std::collections::HashSet::new();
+    for case in &input.cases {
+        if case.id.trim().is_empty() || !case_ids.insert(case.id.clone()) {
+            return Err(AppError::BadRequest("每条评测样本需要唯一且非空的标识".to_string()));
+        }
+    }
     let mut target_keys = std::collections::HashSet::new();
     let mut snapshots = Vec::new();
     let mut endpoint_ids = Vec::new();
