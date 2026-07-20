@@ -10,6 +10,18 @@ let endpointSearchTerm = '';
 let currentReplayApiId = null;
 let currentReplayConfig = { max_records_per_api: 50, state_file_path: 'replay_state.json', max_body_size_kb: 1024 };
 let benchmarkTargets = [];
+const builtinBenchmarkCases = [
+    { id: 'math-discount', category: '数学推理', name: '折扣与税费计算', content: '一件商品标价 240 元，先打八折，再按折后价格加收 6% 税费。请列出计算步骤并给出最终价格。' },
+    { id: 'logic-seating', category: '逻辑推理', name: '座位排列推理', content: '甲、乙、丙、丁四人从左到右坐成一排。甲不坐两端，乙坐在丙左侧，丁不与甲相邻。请给出一种满足条件的排列，并简要说明。' },
+    { id: 'json-instruction', category: '约束遵循', name: '严格 JSON 输出', content: '从文本“订单 A-102，数量 3，单价 19.8，客户为李明”提取订单号、数量、单价和客户。只输出一个 JSON 对象，键名使用 order_id、quantity、unit_price、customer。' },
+    { id: 'code-debug', category: '代码', name: 'JavaScript 调试', content: '以下 JavaScript 函数期望返回数组中最大的偶数：\n```js\nfunction maxEven(values) {\n  return values.filter(v => v % 2).sort()[0];\n}\n```\n请指出两个问题，并给出修复后的函数。' },
+    { id: 'sql-query', category: 'SQL', name: '聚合查询', content: '表 orders 包含 customer_id、amount、created_at 字段。请写一条 PostgreSQL 查询，返回 2025 年每位客户的订单数和总消费额，并按总消费额降序排列。' },
+    { id: 'algorithm', category: '算法', name: '区间合并', content: '给定按起点排序的闭区间数组，例如 [[1,3],[2,6],[8,10],[15,18]]，请说明合并重叠区间的算法、时间复杂度，并给出 Python 实现。' },
+    { id: 'extraction', category: '信息抽取', name: '会议要点提取', content: '从以下文本提取行动项、负责人和截止日期，使用 Markdown 表格：\n“周会决定：王晨在周五前完成登录页；陈雨在下周二前核对支付接口；李娜负责整理测试清单，截止本月 30 日。”' },
+    { id: 'summary', category: '摘要', name: '技术摘要', content: '将以下内容压缩为三条要点，每条不超过 25 个字：\n“系统将请求按端点与模型组合执行。每次请求记录首字节延迟、总耗时和 Token。完成后由评审模型给出多维评分，结果长期保存供后续比较。”' },
+    { id: 'translation', category: '翻译', name: '中英翻译', content: '将下面英文翻译成自然、专业的中文：\n“Reliable evaluation requires consistent inputs, transparent metrics, and repeatable execution across all candidates.”' },
+    { id: 'creative-constraint', category: '创作', name: '约束写作', content: '写一段 80 至 100 字的产品更新通知，主题是“模型评测功能上线”。内容需包含性能比较、自动评分和自定义样本三个要点，语气专业直接。' },
+];
 
 // 初始化
 document.addEventListener('DOMContentLoaded', () => {
@@ -210,6 +222,9 @@ function initEventListeners() {
     document.getElementById('benchmark-endpoints')?.addEventListener('change', updateBenchmarkCandidateModels);
     document.getElementById('benchmark-judge-endpoint')?.addEventListener('change', updateBenchmarkJudgeModels);
     document.getElementById('btn-add-benchmark-target')?.addEventListener('click', addBenchmarkTarget);
+    document.getElementById('btn-select-all-benchmark-cases')?.addEventListener('click', toggleAllBuiltinBenchmarkCases);
+    document.getElementById('btn-import-benchmark-cases')?.addEventListener('click', importBuiltinBenchmarkCases);
+    renderBuiltinBenchmarkCases();
     document.querySelectorAll('.benchmark-tab').forEach(btn => btn.addEventListener('click', () => switchBenchmarkView(btn.dataset.benchmarkView)));
 
     // 密码表单
@@ -1829,6 +1844,36 @@ function renderBenchmarkTargets() {
         const name = candidates.find(endpoint => endpoint.id === target.endpoint_id)?.name || target.endpoint_id;
         return `<span class="benchmark-target">${escapeHtml(name)} · ${escapeHtml(target.model)}<button type="button" onclick="removeBenchmarkTarget(${index})" aria-label="移除">×</button></span>`;
     }).join('') || '<small>尚未添加被测模型组合</small>';
+}
+
+function renderBuiltinBenchmarkCases() {
+    const container = document.getElementById('benchmark-sample-library');
+    if (!container) return;
+    container.innerHTML = builtinBenchmarkCases.map(item => `<label class="benchmark-sample-option"><input type="checkbox" value="${escapeAttr(item.id)}"><span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.category)}</small></span></label>`).join('');
+}
+
+function toggleAllBuiltinBenchmarkCases() {
+    const inputs = Array.from(document.querySelectorAll('#benchmark-sample-library input[type="checkbox"]'));
+    const selectAll = inputs.some(input => !input.checked);
+    inputs.forEach(input => { input.checked = selectAll; });
+    document.getElementById('btn-select-all-benchmark-cases').textContent = selectAll ? '取消全选' : '全选';
+}
+
+function importBuiltinBenchmarkCases() {
+    const selectedIds = new Set(Array.from(document.querySelectorAll('#benchmark-sample-library input:checked')).map(input => input.value));
+    const selected = builtinBenchmarkCases.filter(item => selectedIds.has(item.id));
+    if (!selected.length) { showToast('请选择至少一条内置题目', 'error'); return; }
+    const textarea = document.getElementById('benchmark-samples');
+    let customCases = [];
+    if (textarea.value.trim()) {
+        try { customCases = JSON.parse(textarea.value); } catch { showToast('请先修正样本 JSON，再导入题目', 'error'); return; }
+        if (!Array.isArray(customCases)) { showToast('样本 JSON 应为数组', 'error'); return; }
+    }
+    const existingIds = new Set(customCases.map(item => item.id));
+    const additions = selected.filter(item => !existingIds.has(item.id)).map(item => ({ id: item.id, name: item.name, messages: [{ role: 'user', content: item.content }] }));
+    if (!additions.length) { showToast('所选题目已全部存在于样本中', 'error'); return; }
+    textarea.value = JSON.stringify([...customCases, ...additions], null, 2);
+    showToast(`已导入 ${additions.length} 条内置题目`, 'success');
 }
 
 function updateBenchmarkJudgeModels() {

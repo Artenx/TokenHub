@@ -297,8 +297,9 @@
                                         <div class="form-group"><label for="benchmark-endpoints">被测端点</label><select id="benchmark-endpoints"></select></div>
                                         <div class="form-group"><label for="benchmark-model">被测模型</label><select id="benchmark-model" disabled><option value="">先选择被测端点</option></select></div>
                                         <div class="form-group benchmark-full-row"><label>被测模型组合</label><div class="benchmark-target-picker"><button id="btn-add-benchmark-target" class="btn btn-secondary btn-small" type="button">添加组合</button><small>添加至少两个“端点 + 模型”组合，可选用同一端点的不同模型。</small></div><div id="benchmark-targets" class="benchmark-targets"></div></div>
-                                        <div class="form-group"><label for="benchmark-judge-endpoint">评审端点</label><select id="benchmark-judge-endpoint" required></select></div>
-                                        <div class="form-group"><label for="benchmark-judge-model">评审模型</label><select id="benchmark-judge-model" required disabled><option value="">先选择评审端点</option></select></div>
+                                         <div class="form-group"><label for="benchmark-judge-endpoint">评审端点</label><select id="benchmark-judge-endpoint" required></select></div>
+                                         <div class="form-group"><label for="benchmark-judge-model">评审模型</label><select id="benchmark-judge-model" required disabled><option value="">先选择评审端点</option></select></div>
+                                        <div class="form-group benchmark-full-row"><div class="benchmark-sample-library-header"><label>内置评测题库</label><div><button id="btn-select-all-benchmark-cases" class="btn btn-secondary btn-small" type="button">全选</button><button id="btn-import-benchmark-cases" class="btn btn-primary btn-small" type="button">导入所选题目</button></div></div><p class="benchmark-sample-library-note">选择多个题目后导入到下方样本 JSON；导入内容可继续自由编辑。</p><div id="benchmark-sample-library" class="benchmark-sample-library"></div></div>
                                         <div class="form-group benchmark-full-row"><label for="benchmark-samples">样本 JSON</label><textarea id="benchmark-samples" rows="4" required placeholder='[{"name":"基础问答","messages":[{"role":"user","content":"解释什么是 TCP"}]}]'></textarea></div>
                                         <div class="form-group benchmark-full-row"><label for="benchmark-rubric">评分标准</label><textarea id="benchmark-rubric" rows="2" required>评估准确性、完整性、指令遵循和表达质量。</textarea></div>
                                         <div class="benchmark-form-actions"><button class="btn btn-primary" type="submit">开始评测</button></div>
@@ -786,6 +787,6 @@
         </footer>
     </div>
 
-    <script src="app.js?v=11"></script>
+    <script src="app.js?v=12"></script>
 </body>
 </html>
