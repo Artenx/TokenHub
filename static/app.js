@@ -233,6 +233,8 @@ function initEventListeners() {
     document.querySelectorAll('.skill-tab').forEach(btn => btn.addEventListener('click', () => switchSkillView(btn.dataset.skillView)));
     document.getElementById('btn-add-skill-source')?.addEventListener('click', addCustomSkillSource);
     document.getElementById('btn-save-skill-sources')?.addEventListener('click', saveSkillSources);
+    initSkillUploadZone();
+    restoreSkillTab();
 
     // 密码表单
     document.getElementById('password-form').addEventListener('submit', handleChangePassword);
@@ -4108,12 +4110,37 @@ async function loadSkillRepository() {
     await Promise.all([loadLocalSkills(), loadSkillSources()]);
 }
 
+function restoreSkillTab() {
+    const saved = localStorage.getItem('skill-last-view');
+    if (saved) switchSkillView(saved);
+}
+
 function switchSkillView(view) {
+    localStorage.setItem('skill-last-view', view);
     document.querySelectorAll('.skill-tab').forEach(button => button.classList.toggle('active', button.dataset.skillView === view));
     document.querySelectorAll('.skill-view').forEach(panel => {
         panel.style.display = panel.id === `skill-${view}-view` ? '' : 'none';
     });
     if (view === 'sources') loadSkillSources();
+}
+
+function initSkillUploadZone() {
+    const zone = document.getElementById('skill-upload-input');
+    if (!zone) return;
+    const label = zone.closest('.skill-header-actions')?.querySelector('label[for="skill-upload-input"]');
+    if (!label) return;
+    ['dragenter', 'dragover'].forEach(event => label.addEventListener(event, e => { e.preventDefault(); label.classList.add('dragover'); }));
+    ['dragleave', 'drop'].forEach(event => label.addEventListener(event, e => { e.preventDefault(); label.classList.remove('dragover'); }));
+    label.addEventListener('drop', e => {
+        const file = e.dataTransfer?.files?.[0];
+        if (file) previewSkillUpload({ target: { files: [file], value: '' } });
+    });
+}
+
+function formatFileSize(bytes) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
 async function readSkillApiError(response) {
@@ -4124,7 +4151,7 @@ async function readSkillApiError(response) {
 async function loadLocalSkills() {
     const container = document.getElementById('skill-local-list');
     if (!container) return;
-    container.innerHTML = '<p class="skill-empty">正在读取本地技能...</p>';
+    container.innerHTML = Array.from({ length: 3 }, () => `<div class="skill-skeleton"><div class="skeleton-line" style="width:40%"></div><div class="skeleton-line title"></div><div class="skeleton-line" style="width:80%"></div><div class="skeleton-line" style="width:60%"></div><div class="skeleton-line meta"></div></div>`).join('');
     try {
         const response = await fetch(`${API_BASE}/skills`);
         if (!response.ok) throw new Error(await readSkillApiError(response));
@@ -4143,7 +4170,8 @@ function renderLocalSkills(skills) {
     container.innerHTML = skills.map(skill => {
         const source = skill.source?.url || '本地上传';
         const valid = skill.validation_status === 'valid';
-        return `<article class="skill-card">
+        const sourceKey = skill.source?.source_type || (source === '本地上传' ? 'local-upload' : 'local-upload');
+        return `<article class="skill-card" data-source="${escapeAttr(sourceKey)}">
             <div class="skill-card-top"><span class="skill-status ${valid ? 'valid' : 'invalid'}">${valid ? '有效' : '需处理'}</span><code>${escapeHtml(skill.directory_name)}</code></div>
             <h3>${escapeHtml(skill.name)}</h3>
             <p>${escapeHtml(skill.description || skill.validation_message || '未提供描述')}</p>
@@ -4169,6 +4197,8 @@ async function previewSkillUpload(event) {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.zip') && file.type !== 'application/zip') { showToast('请选择 ZIP 格式的技能包文件', 'error'); return; }
+    showToast(`正在预览 ${escapeHtml(file.name)} (${formatFileSize(file.size)})...`, 'info');
     try {
         const response = await fetch(`${API_BASE}/skills/upload-preview`, { method: 'POST', headers: { 'Content-Type': 'application/zip' }, body: file });
         if (!response.ok) throw new Error(await readSkillApiError(response));
