@@ -21,17 +21,21 @@ struct GithubSkillLink {
 
 fn github_skill_link(url: &Url) -> Result<GithubSkillLink, AppError> {
     let parts: Vec<_> = url.path_segments().ok_or_else(|| AppError::BadRequest("GitHub 技能地址无效".to_string()))?.collect();
-    let (owner, repository, link_type, version) = match parts.as_slice() {
-        [owner, repository, link_type, version, ..] if !owner.is_empty() && !repository.is_empty() && !version.is_empty() => (*owner, *repository, *link_type, *version),
+    let (owner, repository, directory, version) = match parts.as_slice() {
+        [owner, repository] if !owner.is_empty() && !repository.is_empty() => {
+            (*owner, *repository, String::new(), "HEAD")
+        }
+        [owner, repository, link_type, version, ..] if !owner.is_empty() && !repository.is_empty() && !version.is_empty() => {
+            let directory_parts = match *link_type {
+                "tree" => &parts[4..],
+                "blob" if parts.last() == Some(&"SKILL.md") => &parts[4..parts.len().saturating_sub(1)],
+                "blob" => return Err(AppError::BadRequest("GitHub 文件链接必须指向 SKILL.md".to_string())),
+                _ => return Err(AppError::BadRequest("GitHub 技能链接必须使用 tree 或 blob 路径".to_string())),
+            };
+            (*owner, *repository, directory_parts.join("/"), *version)
+        }
         _ => return Err(AppError::BadRequest("GitHub 技能链接必须包含仓库、分支或标签和技能目录".to_string())),
     };
-    let directory_parts = match link_type {
-        "tree" => &parts[4..],
-        "blob" if parts.len() >= 5 && parts.last() == Some(&"SKILL.md") => &parts[4..parts.len() - 1],
-        "blob" => return Err(AppError::BadRequest("GitHub 文件链接必须指向 SKILL.md".to_string())),
-        _ => return Err(AppError::BadRequest("GitHub 技能链接必须使用 tree 或 blob 路径".to_string())),
-    };
-    let directory = directory_parts.join("/");
     let archive_url = Url::parse(&format!("https://codeload.github.com/{owner}/{repository}/zip/{version}"))
         .map_err(|error| AppError::Internal(error.to_string()))?;
     Ok(GithubSkillLink { archive_url, directory })
@@ -1718,6 +1722,13 @@ mod benchmark_tests {
     #[test]
     fn github_skill_link_rejects_non_skill_md_files() {
         assert!(github_skill_link(&Url::parse("https://github.com/acme/skills/blob/main/packages/review/README.md").unwrap()).is_err());
+    }
+
+    #[test]
+    fn github_skill_link_accepts_bare_repository_url() {
+        let link = github_skill_link(&Url::parse("https://github.com/acme/skills").unwrap()).unwrap();
+        assert_eq!(link.archive_url.as_str(), "https://codeload.github.com/acme/skills/zip/HEAD");
+        assert!(link.directory.is_empty());
     }
 
     #[test]
