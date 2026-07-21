@@ -1,7 +1,7 @@
 use crate::auth::check_admin_auth;
 use crate::error::AppError;
 use crate::models::*;
-use crate::skill_repository::{delete_skill_package, import_skill_package, list_skill_files, preview_zip_archive, repository_root, scan_local_skills};
+use crate::skill_repository::{build_skill_archive, delete_skill_package, import_skill_package, list_skill_files, preview_zip_archive, repository_root, scan_local_skills};
 use crate::skill_sources::{adapters_for_sources, search_sources};
 use crate::state::AppState;
 use crate::validator::InputValidator;
@@ -90,6 +90,12 @@ pub struct SkillImportRequest {
 #[derive(serde::Deserialize)]
 pub struct DeleteSkillRequest {
     confirmation: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct UpdateSkillTagsRequest {
+    #[serde(default)]
+    tags: Vec<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -1405,12 +1411,74 @@ fn refresh_local_skills(state: &AppState) -> Result<Vec<LocalSkill>, AppError> {
         if let Some(saved) = previous.skills.iter().find(|saved| saved.directory_name == skill.directory_name) {
             skill.source = saved.source.clone();
             skill.imported_at = saved.imported_at;
+            skill.tags = saved.tags.clone();
         }
     }
     let mut repository = previous;
     repository.skills = skills.clone();
     state.update_skill_repository_state(repository);
     Ok(skills)
+}
+
+const MAX_SKILL_TAGS: usize = 10;
+const MAX_SKILL_TAG_LENGTH: usize = 20;
+
+fn normalize_skill_tags(tags: &[String]) -> Result<Vec<String>, AppError> {
+    let mut normalized = Vec::new();
+    for tag in tags {
+        let tag = tag.trim();
+        if tag.is_empty() {
+            continue;
+        }
+        if tag.chars().count() > MAX_SKILL_TAG_LENGTH {
+            return Err(AppError::BadRequest(format!("标签长度不能超过 {} 个字符: {}", MAX_SKILL_TAG_LENGTH, tag)));
+        }
+        if !normalized.iter().any(|existing| existing == tag) {
+            normalized.push(tag.to_string());
+        }
+    }
+    if normalized.len() > MAX_SKILL_TAGS {
+        return Err(AppError::BadRequest(format!("每个技能最多 {} 个标签", MAX_SKILL_TAGS)));
+    }
+    Ok(normalized)
+}
+
+pub async fn update_skill_tags(state: web::Data<AppState>, req: HttpRequest, path: web::Path<String>, body: web::Json<UpdateSkillTagsRequest>) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    let directory_name = path.into_inner();
+    let tags = normalize_skill_tags(&body.tags)?;
+    refresh_local_skills(state.get_ref())?;
+    let mut repository = state.skill_repository_state();
+    let Some(skill) = repository.skills.iter_mut().find(|skill| skill.directory_name == directory_name) else {
+        return Err(AppError::NotFound("技能包不存在".to_string()));
+    };
+    skill.tags = tags;
+    let updated = skill.clone();
+    state.update_skill_repository_state(repository);
+    add_skill_audit(state.get_ref(), "tags", &directory_name, updated.source.clone(), "success", None);
+    Ok(HttpResponse::Ok().json(updated))
+}
+
+pub async fn download_skill(state: web::Data<AppState>, req: HttpRequest, path: web::Path<String>) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    let directory_name = path.into_inner();
+    let (root, config) = skill_repository_root(state.get_ref())?;
+    let archive = build_skill_archive(&root, &directory_name, &config)
+        .map_err(|error| AppError::BadRequest(error.to_string()))?;
+    let fallback: String = directory_name.chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' { ch } else { '-' })
+        .collect();
+    let fallback = if fallback.is_empty() { "skill".to_string() } else { fallback };
+    let encoded: String = directory_name.bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (byte as char).to_string(),
+            _ => format!("%{:02X}", byte),
+        })
+        .collect();
+    Ok(HttpResponse::Ok()
+        .content_type("application/zip")
+        .insert_header(("Content-Disposition", format!("attachment; filename=\"{}.zip\"; filename*=UTF-8''{}.zip", fallback, encoded)))
+        .body(archive))
 }
 
 fn add_skill_audit(state: &AppState, operation: &str, directory_name: &str, source: Option<SkillOrigin>, status: &str, error_message: Option<String>) {
@@ -1835,6 +1903,45 @@ mod benchmark_tests {
         assert!(conflict.conflict);
         assert!(import_skill(state.clone(), authenticated_request(state.get_ref()), web::Json(SkillImportRequest { preview_id: conflict.id, replace: false }))
             .await.is_err());
+    }
+
+    #[test]
+    fn skill_tag_normalization_trims_dedupes_and_limits() {
+        let tags = normalize_skill_tags(&[" 前端ui ".to_string(), "前端ui".to_string(), String::new(), "ppt".to_string()]).unwrap();
+        assert_eq!(tags, vec!["前端ui", "ppt"]);
+        assert!(normalize_skill_tags(&["x".repeat(21)]).is_err());
+        let many: Vec<String> = (0..11).map(|index| format!("tag-{}", index)).collect();
+        assert!(normalize_skill_tags(&many).is_err());
+    }
+
+    #[actix_rt::test]
+    async fn skill_tags_update_and_download() {
+        let state = state().await;
+        let response = preview_skill_upload(state.clone(), authenticated_request(state.get_ref()), skill_archive("example"))
+            .await.unwrap();
+        let preview: SkillImportPreview = serde_json::from_slice(&to_bytes(response.into_body()).await.unwrap()).unwrap();
+        import_skill(state.clone(), authenticated_request(state.get_ref()), web::Json(SkillImportRequest { preview_id: preview.id, replace: false }))
+            .await.unwrap();
+
+        let updated = update_skill_tags(state.clone(), authenticated_request(state.get_ref()), web::Path::from("example".to_string()), web::Json(UpdateSkillTagsRequest { tags: vec!["前端ui".to_string(), "ppt".to_string()] }))
+            .await.unwrap();
+        let skill: LocalSkill = serde_json::from_slice(&to_bytes(updated.into_body()).await.unwrap()).unwrap();
+        assert_eq!(skill.tags, vec!["前端ui", "ppt"]);
+
+        let skills = refresh_local_skills(state.get_ref()).unwrap();
+        assert_eq!(skills[0].tags, vec!["前端ui", "ppt"]);
+
+        assert!(update_skill_tags(state.clone(), authenticated_request(state.get_ref()), web::Path::from("missing".to_string()), web::Json(UpdateSkillTagsRequest { tags: Vec::new() }))
+            .await.is_err());
+
+        let response = download_skill(state.clone(), authenticated_request(state.get_ref()), web::Path::from("example".to_string()))
+            .await.unwrap();
+        assert_eq!(response.status(), 200);
+        let body = to_bytes(response.into_body()).await.unwrap();
+        let mut archive = zip::ZipArchive::new(Cursor::new(body)).unwrap();
+        let mut names = archive.file_names().collect::<Vec<_>>();
+        names.sort_unstable();
+        assert_eq!(names, vec!["example/README.md", "example/SKILL.md"]);
     }
 
     #[actix_rt::test]

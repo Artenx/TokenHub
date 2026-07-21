@@ -1828,6 +1828,7 @@ exposed_apis = []
                     validation_message: None,
                     source: Some(make_skill_origin()),
                     imported_at: Some(Utc::now()),
+                    tags: Vec::new(),
                 }],
                 audit_entries: Vec::new(),
             });

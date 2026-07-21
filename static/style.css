@@ -1582,6 +1582,24 @@ nav {
 .skill-collection-info code { flex-shrink: 0; color: var(--text-tertiary); font-size: 0.6875rem; }
 .skill-collection-meta { flex-shrink: 0; display: flex; align-items: center; gap: 0.5rem; color: var(--text-secondary); font-size: 0.6875rem; }
 
+.skill-local-toolbar { margin-bottom: 0.625rem; }
+.skill-local-toolbar input { width: 100%; padding: 0.5rem 0.75rem; }
+.skill-tag-filters { display: flex; flex-wrap: wrap; gap: 0.375rem; margin-bottom: 0.875rem; }
+.skill-tag-filters:empty { margin-bottom: 0; }
+.skill-tag-filter { padding: 0.2rem 0.625rem; border: 1px solid var(--border); border-radius: 999px; background: var(--background); color: var(--text-secondary); font-size: 0.6875rem; font-weight: 500; cursor: pointer; transition: all 0.15s ease; }
+.skill-tag-filter:hover { border-color: var(--primary); color: var(--primary); }
+.skill-tag-filter.active { border-color: var(--primary); background: var(--primary-muted); color: var(--primary); font-weight: 600; }
+.skill-card-tags { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.5rem; }
+.skill-tag { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.125rem 0.5rem; border-radius: 999px; background: var(--primary-muted); color: var(--primary); font-size: 0.625rem; font-weight: 600; }
+.skill-tag-removable { padding-right: 0.25rem; }
+.skill-tag-removable button { display: inline-flex; align-items: center; justify-content: center; width: 0.875rem; height: 0.875rem; padding: 0; border: none; border-radius: 50%; background: transparent; color: inherit; font-size: 0.75rem; line-height: 1; cursor: pointer; opacity: 0.7; }
+.skill-tag-removable button:hover { opacity: 1; background: rgba(180, 83, 9, 0.15); }
+.skill-tag-editor { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.25rem; }
+.skill-tag-editor-chips { display: flex; flex-wrap: wrap; gap: 0.375rem; }
+.skill-tag-empty { color: var(--text-tertiary); font-size: 0.75rem; }
+.skill-tag-editor-input { display: flex; gap: 0.5rem; }
+.skill-tag-editor-input input { flex: 1; min-width: 0; padding: 0.375rem 0.625rem; font-size: 0.75rem; }
+
 .skill-skeleton { padding: 1.125rem; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--background); height: 200px; display: flex; flex-direction: column; gap: 0.75rem; }
 .skeleton-line { height: 0.75rem; border-radius: 999px; background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--muted) 50%, var(--bg-tertiary) 75%); background-size: 200% 100%; animation: skeletonShimmer 1.5s infinite; }
 .skeleton-line.title { height: 1rem; width: 60%; margin-top: 0.5rem; }

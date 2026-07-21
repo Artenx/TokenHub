@@ -511,6 +511,9 @@ pub struct LocalSkill {
     pub source: Option<SkillOrigin>,
     #[serde(default)]
     pub imported_at: Option<DateTime<Utc>>,
+    /// 用户自定义分类标签
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// 技能包来源信息

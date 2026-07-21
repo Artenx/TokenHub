@@ -57,6 +57,7 @@ pub fn scan_local_skills(root: &Path, config: &SkillRepositoryConfig) -> Result<
                 validation_message: None,
                 source: None,
                 imported_at: None,
+                tags: Vec::new(),
             }),
             Err(error) => skills.push(LocalSkill {
                 id,
@@ -69,6 +70,7 @@ pub fn scan_local_skills(root: &Path, config: &SkillRepositoryConfig) -> Result<
                 validation_message: Some(error.to_string()),
                 source: None,
                 imported_at: None,
+                tags: Vec::new(),
             }),
         }
     }
@@ -268,6 +270,29 @@ pub fn delete_skill_package(root: &Path, directory_name: &str, confirmation: &st
         bail!("技能包不存在: {}", directory_name);
     }
     fs::remove_dir_all(target).context("删除技能包失败")
+}
+
+/// 将本地技能目录打包为 ZIP 字节流，供离线下载
+pub fn build_skill_archive(root: &Path, directory_name: &str, config: &SkillRepositoryConfig) -> Result<Vec<u8>> {
+    if !is_safe_directory_name(directory_name) {
+        bail!("技能目录名称无效");
+    }
+    let directory = root.join(directory_name);
+    if !directory.is_dir() {
+        bail!("技能包不存在: {}", directory_name);
+    }
+    let package = read_skill_directory(&directory, config)?;
+    let output = Cursor::new(Vec::new());
+    let mut writer = zip::ZipWriter::new(output);
+    for file in &package.files {
+        let entry_name = format!("{}/{}", directory_name, file.relative_path.to_string_lossy());
+        writer.start_file(entry_name, zip::write::FileOptions::default())
+            .context("创建离线技能包失败")?;
+        std::io::Write::write_all(&mut writer, &file.contents).context("写入离线技能包失败")?;
+    }
+    writer.finish()
+        .map(|cursor| cursor.into_inner())
+        .context("完成离线技能包失败")
 }
 
 fn read_skill_directory(directory: &Path, config: &SkillRepositoryConfig) -> Result<PreparedSkillPackage> {

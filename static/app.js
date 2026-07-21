@@ -4149,6 +4149,10 @@ async function readSkillApiError(response) {
     try { return JSON.parse(body).error?.message || JSON.parse(body).message || body; } catch { return body || `HTTP ${response.status}`; }
 }
 
+let currentLocalSkills = [];
+let localSkillSearchTerm = '';
+const selectedSkillTags = new Set();
+
 async function loadLocalSkills() {
     const container = document.getElementById('skill-local-list');
     if (!container) return;
@@ -4156,28 +4160,64 @@ async function loadLocalSkills() {
     try {
         const response = await fetch(`${API_BASE}/skills`);
         if (!response.ok) throw new Error(await readSkillApiError(response));
-        renderLocalSkills(await response.json());
+        currentLocalSkills = await response.json();
+        renderSkillTagFilters();
+        applyLocalSkillFilters();
     } catch (error) {
         container.innerHTML = `<p class="skill-empty skill-error">加载失败: ${escapeHtml(error.message)}</p>`;
     }
 }
 
+function onLocalSkillSearch(value) {
+    localSkillSearchTerm = value.trim().toLowerCase();
+    applyLocalSkillFilters();
+}
+
+function toggleSkillTagFilter(tag) {
+    if (selectedSkillTags.has(tag)) selectedSkillTags.delete(tag);
+    else selectedSkillTags.add(tag);
+    renderSkillTagFilters();
+    applyLocalSkillFilters();
+}
+
+function renderSkillTagFilters() {
+    const container = document.getElementById('skill-tag-filters');
+    if (!container) return;
+    const tags = [...new Set(currentLocalSkills.flatMap(skill => skill.tags || []))].sort((a, b) => a.localeCompare(b, 'zh'));
+    if (!tags.length) { container.innerHTML = ''; return; }
+    container.innerHTML = tags.map(tag => `<button class="skill-tag-filter ${selectedSkillTags.has(tag) ? 'active' : ''}" type="button" onclick="toggleSkillTagFilter('${escapeAttr(tag)}')">${escapeHtml(tag)}</button>`).join('');
+}
+
+function applyLocalSkillFilters() {
+    const filtered = currentLocalSkills.filter(skill => {
+        if (selectedSkillTags.size && !(skill.tags || []).some(tag => selectedSkillTags.has(tag))) return false;
+        if (!localSkillSearchTerm) return true;
+        const haystack = [skill.name, skill.description, skill.directory_name, ...(skill.tags || [])].join(' ').toLowerCase();
+        return haystack.includes(localSkillSearchTerm);
+    });
+    renderLocalSkills(filtered);
+}
+
 function renderLocalSkills(skills) {
     const container = document.getElementById('skill-local-list');
     if (!skills.length) {
-        container.innerHTML = '<div class="skill-empty-panel"><strong>本地仓库还没有技能包</strong><span>上传包含根目录 SKILL.md 的 ZIP 文件，或从联网搜索中导入。</span></div>';
+        container.innerHTML = currentLocalSkills.length
+            ? '<div class="skill-empty-panel"><strong>没有匹配的技能包</strong><span>调整搜索关键词或清除标签筛选。</span></div>'
+            : '<div class="skill-empty-panel"><strong>本地仓库还没有技能包</strong><span>上传包含根目录 SKILL.md 的 ZIP 文件，或从联网搜索中导入。</span></div>';
         return;
     }
     container.innerHTML = skills.map(skill => {
         const source = skill.source?.url || '本地上传';
         const valid = skill.validation_status === 'valid';
         const sourceKey = skill.source?.source_type || (source === '本地上传' ? 'local-upload' : 'local-upload');
+        const tags = (skill.tags || []).map(tag => `<span class="skill-tag">${escapeHtml(tag)}</span>`).join('');
         return `<article class="skill-card" data-source="${escapeAttr(sourceKey)}">
             <div class="skill-card-top"><span class="skill-status ${valid ? 'valid' : 'invalid'}">${valid ? '有效' : '需处理'}</span><code>${escapeHtml(skill.directory_name)}</code></div>
             <h3>${escapeHtml(skill.name)}</h3>
             <p>${escapeHtml(skill.description || skill.validation_message || '未提供描述')}</p>
+            ${tags ? `<div class="skill-card-tags">${tags}</div>` : ''}
             <div class="skill-card-meta"><span>${skill.file_count} 个文件</span><span title="${escapeAttr(source)}">${escapeHtml(source)}</span></div>
-            <div class="skill-card-actions"><button class="btn btn-small" type="button" onclick="openSkillDetails('${escapeAttr(skill.id)}')">查看详情</button><button class="btn btn-small btn-danger" type="button" onclick="confirmSkillDelete('${escapeAttr(skill.directory_name)}')">删除</button></div>
+            <div class="skill-card-actions"><button class="btn btn-small" type="button" onclick="openSkillDetails('${escapeAttr(skill.id)}')">查看详情</button><a class="btn btn-small" href="${API_BASE}/skills/${encodeURIComponent(skill.directory_name)}/download" download>下载</a><button class="btn btn-small btn-danger" type="button" onclick="confirmSkillDelete('${escapeAttr(skill.directory_name)}')">删除</button></div>
         </article>`;
     }).join('');
 }
@@ -4188,10 +4228,43 @@ async function openSkillDetails(id) {
         if (!response.ok) throw new Error(await readSkillApiError(response));
         const { skill, skill_md: skillMd, files } = await response.json();
         document.getElementById('skill-modal-title').textContent = skill.name;
-        document.getElementById('skill-modal-body').innerHTML = `<div class="skill-detail-meta"><span class="skill-status ${skill.validation_status === 'valid' ? 'valid' : 'invalid'}">${escapeHtml(skill.validation_status)}</span><code>${escapeHtml(skill.directory_name)}</code><span>${skill.file_count} 个文件</span></div><p class="skill-detail-description">${escapeHtml(skill.description || '未提供描述')}</p><h3>SKILL.md</h3><pre class="skill-code">${escapeHtml(skillMd)}</pre><h3>文件清单</h3><ul class="skill-file-list">${files.map(file => `<li><code>${escapeHtml(file)}</code></li>`).join('')}</ul>`;
-        document.getElementById('skill-modal-actions').innerHTML = `<button class="btn btn-secondary" type="button" onclick="hideModal('skill-modal')">关闭</button><button class="btn btn-danger" type="button" onclick="confirmSkillDelete('${escapeAttr(skill.directory_name)}')">删除技能</button>`;
+        const tagChips = (skill.tags || []).map(tag => `<span class="skill-tag skill-tag-removable">${escapeHtml(tag)}<button type="button" aria-label="移除标签 ${escapeAttr(tag)}" onclick="removeSkillTag('${escapeAttr(skill.directory_name)}', '${escapeAttr(tag)}')">×</button></span>`).join('');
+        document.getElementById('skill-modal-body').innerHTML = `<div class="skill-detail-meta"><span class="skill-status ${skill.validation_status === 'valid' ? 'valid' : 'invalid'}">${escapeHtml(skill.validation_status)}</span><code>${escapeHtml(skill.directory_name)}</code><span>${skill.file_count} 个文件</span></div><p class="skill-detail-description">${escapeHtml(skill.description || '未提供描述')}</p>
+            <h3>标签</h3><div class="skill-tag-editor"><div class="skill-tag-editor-chips">${tagChips || '<span class="skill-tag-empty">暂无标签</span>'}</div><div class="skill-tag-editor-input"><input id="skill-tag-input" type="text" maxlength="20" placeholder="添加标签，如：前端ui" onkeydown="if(event.key==='Enter'){event.preventDefault();addSkillTag('${escapeAttr(skill.directory_name)}')}"><button class="btn btn-secondary btn-small" type="button" onclick="addSkillTag('${escapeAttr(skill.directory_name)}')">添加</button></div></div>
+            <h3>SKILL.md</h3><pre class="skill-code">${escapeHtml(skillMd)}</pre><h3>文件清单</h3><ul class="skill-file-list">${files.map(file => `<li><code>${escapeHtml(file)}</code></li>`).join('')}</ul>`;
+        document.getElementById('skill-modal-actions').innerHTML = `<button class="btn btn-secondary" type="button" onclick="hideModal('skill-modal')">关闭</button><a class="btn btn-primary" href="${API_BASE}/skills/${encodeURIComponent(skill.directory_name)}/download" download>下载离线包</a><button class="btn btn-danger" type="button" onclick="confirmSkillDelete('${escapeAttr(skill.directory_name)}')">删除技能</button>`;
         showModal('skill-modal');
     } catch (error) { showToast(`无法读取技能详情: ${error.message}`, 'error'); }
+}
+
+async function saveSkillTags(directoryName, tags) {
+    const response = await fetch(`${API_BASE}/skills/${encodeURIComponent(directoryName)}/tags`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tags }) });
+    if (!response.ok) throw new Error(await readSkillApiError(response));
+    return response.json();
+}
+
+async function addSkillTag(directoryName) {
+    const input = document.getElementById('skill-tag-input');
+    const tag = input.value.trim();
+    if (!tag) return;
+    const skill = currentLocalSkills.find(item => item.directory_name === directoryName);
+    const tags = [...(skill?.tags || []), tag];
+    try {
+        await saveSkillTags(directoryName, tags);
+        input.value = '';
+        await loadLocalSkills();
+        openSkillDetails(`local:${directoryName}`);
+    } catch (error) { showToast(`添加标签失败: ${error.message}`, 'error'); }
+}
+
+async function removeSkillTag(directoryName, tag) {
+    const skill = currentLocalSkills.find(item => item.directory_name === directoryName);
+    const tags = (skill?.tags || []).filter(existing => existing !== tag);
+    try {
+        await saveSkillTags(directoryName, tags);
+        await loadLocalSkills();
+        openSkillDetails(`local:${directoryName}`);
+    } catch (error) { showToast(`移除标签失败: ${error.message}`, 'error'); }
 }
 
 async function previewSkillUpload(event) {
