@@ -97,6 +97,19 @@ pub fn preview_zip_archive(
 
     const AUTO_ROOT: &str = "skill-package";
 
+    let mut needs_wrap = false;
+    for index in 0..zip.len() {
+        let entry = zip.by_index(index)?;
+        if entry.is_dir() {
+            continue;
+        }
+        let enclosed = entry.enclosed_name().ok_or_else(|| anyhow::anyhow!("技能包包含不安全路径: {}", entry.name()))?;
+        if enclosed.components().count() < 2 {
+            needs_wrap = true;
+            break;
+        }
+    }
+
     for index in 0..zip.len() {
         let mut entry = zip.by_index(index)?;
         let name = entry.name().to_string();
@@ -118,7 +131,7 @@ pub fn preview_zip_archive(
             bail!("技能包超过文件数量上限");
         }
         let raw_path = enclosed.to_path_buf();
-        let relative_path = if raw_path.components().count() < 2 {
+        let relative_path = if needs_wrap {
             Path::new(AUTO_ROOT).join(&raw_path)
         } else {
             raw_path
