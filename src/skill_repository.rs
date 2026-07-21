@@ -119,7 +119,7 @@ pub fn preview_zip_archive(
             bail!("技能包超过文件数量上限");
         }
         let relative_path = enclosed.to_path_buf();
-        if relative_path.file_name().is_some_and(|file_name| file_name == "SKILL.md") {
+        if relative_path.file_name().is_some_and(|file_name| file_name == "SKILL.md") && relative_path.components().count() == 2 {
             skill_roots.push(relative_path.parent().unwrap().to_path_buf());
         }
         let mut contents = Vec::with_capacity(entry.size() as usize);
@@ -264,7 +264,7 @@ fn package_from_files(
 ) -> Result<PreparedSkillPackage> {
     let skill_md = files.iter().find(|file| file.relative_path == Path::new("SKILL.md"))
         .ok_or_else(|| anyhow::anyhow!("技能包缺少根目录 SKILL.md"))?;
-    if files.iter().filter(|file| file.relative_path.file_name().is_some_and(|name| name == "SKILL.md")).count() != 1 {
+    if files.iter().filter(|file| file.relative_path == Path::new("SKILL.md")).count() != 1 {
         bail!("技能包应包含唯一的根目录 SKILL.md");
     }
     let content = std::str::from_utf8(&skill_md.contents).context("SKILL.md 必须为 UTF-8 文本")?;
