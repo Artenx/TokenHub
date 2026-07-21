@@ -95,6 +95,8 @@ pub fn preview_zip_archive(
     let mut total_size = 0_u64;
     let mut files = Vec::new();
 
+    const AUTO_ROOT: &str = "skill-package";
+
     for index in 0..zip.len() {
         let mut entry = zip.by_index(index)?;
         let name = entry.name().to_string();
@@ -105,9 +107,6 @@ pub fn preview_zip_archive(
             bail!("技能包包含符号链接: {}", name);
         }
         let enclosed = entry.enclosed_name().ok_or_else(|| anyhow::anyhow!("技能包包含不安全路径: {}", name))?;
-        if enclosed.components().count() < 2 {
-            bail!("技能包文件必须位于技能根目录内: {}", name);
-        }
         if entry.size() > config.max_file_size_bytes {
             bail!("技能包文件超过单文件容量上限: {}", name);
         }
@@ -118,7 +117,12 @@ pub fn preview_zip_archive(
         if files.len() >= config.max_file_count {
             bail!("技能包超过文件数量上限");
         }
-        let relative_path = enclosed.to_path_buf();
+        let raw_path = enclosed.to_path_buf();
+        let relative_path = if raw_path.components().count() < 2 {
+            Path::new(AUTO_ROOT).join(&raw_path)
+        } else {
+            raw_path
+        };
         if relative_path.file_name().is_some_and(|file_name| file_name == "SKILL.md") && relative_path.components().count() == 2 {
             skill_roots.push(relative_path.parent().unwrap().to_path_buf());
         }
