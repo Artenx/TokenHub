@@ -26,16 +26,12 @@ fn github_skill_link(url: &Url) -> Result<GithubSkillLink, AppError> {
         _ => return Err(AppError::BadRequest("GitHub 技能链接必须包含仓库、分支或标签和技能目录".to_string())),
     };
     let directory_parts = match link_type {
-        "tree" if parts.len() >= 6 => &parts[4..],
-        "blob" if parts.len() >= 6 && parts.last() == Some(&"SKILL.md") => &parts[4..parts.len() - 1],
-        "tree" => return Err(AppError::BadRequest("GitHub 目录链接必须包含技能目录".to_string())),
+        "tree" => &parts[4..],
+        "blob" if parts.len() >= 5 && parts.last() == Some(&"SKILL.md") => &parts[4..parts.len() - 1],
         "blob" => return Err(AppError::BadRequest("GitHub 文件链接必须指向 SKILL.md".to_string())),
         _ => return Err(AppError::BadRequest("GitHub 技能链接必须使用 tree 或 blob 路径".to_string())),
     };
     let directory = directory_parts.join("/");
-    if directory.is_empty() {
-        return Err(AppError::BadRequest("GitHub 技能链接必须包含技能目录".to_string()));
-    }
     let archive_url = Url::parse(&format!("https://codeload.github.com/{owner}/{repository}/zip/{version}"))
         .map_err(|error| AppError::Internal(error.to_string()))?;
     Ok(GithubSkillLink { archive_url, directory })
@@ -44,8 +40,13 @@ fn github_skill_link(url: &Url) -> Result<GithubSkillLink, AppError> {
 fn isolate_github_skill_archive(archive: &[u8], skill_directory: &str) -> Result<Vec<u8>, AppError> {
     let mut source = zip::ZipArchive::new(Cursor::new(archive))
         .map_err(|error| AppError::BadRequest(format!("读取 GitHub 归档失败: {}", error)))?;
-    let root = skill_directory.rsplit('/').next().filter(|name| !name.is_empty())
-        .ok_or_else(|| AppError::BadRequest("GitHub 技能目录无效".to_string()))?;
+    let is_repository_root = skill_directory.is_empty();
+    let root = if is_repository_root {
+        "github-skill"
+    } else {
+        skill_directory.rsplit('/').next().filter(|name| !name.is_empty())
+            .ok_or_else(|| AppError::BadRequest("GitHub 技能目录无效".to_string()))?
+    };
     let prefix = format!("{}/", skill_directory.trim_matches('/'));
     let output = Cursor::new(Vec::new());
     let mut writer = zip::ZipWriter::new(output);
@@ -57,7 +58,12 @@ fn isolate_github_skill_archive(archive: &[u8], skill_directory: &str) -> Result
             continue;
         }
         let Some((_, repository_path)) = entry.name().split_once('/') else { continue; };
-        let Some(relative_path) = repository_path.strip_prefix(&prefix).map(str::to_owned) else { continue; };
+        let relative_path = if is_repository_root {
+            repository_path.to_string()
+        } else {
+            let Some(relative_path) = repository_path.strip_prefix(&prefix).map(str::to_owned) else { continue; };
+            relative_path
+        };
         if relative_path.is_empty() {
             continue;
         }
@@ -1685,6 +1691,28 @@ mod benchmark_tests {
         let link = github_skill_link(&Url::parse("https://github.com/acme/skills/blob/v1.2.0/packages/review/SKILL.md").unwrap()).unwrap();
         assert_eq!(link.archive_url.as_str(), "https://codeload.github.com/acme/skills/zip/v1.2.0");
         assert_eq!(link.directory, "packages/review");
+    }
+
+    #[test]
+    fn github_skill_link_supports_repository_root_skill_md() {
+        let link = github_skill_link(&Url::parse("https://github.com/acme/skills/blob/main/SKILL.md").unwrap()).unwrap();
+        assert_eq!(link.archive_url.as_str(), "https://codeload.github.com/acme/skills/zip/main");
+        assert!(link.directory.is_empty());
+    }
+
+    #[test]
+    fn github_archive_preview_supports_repository_root_skill() {
+        let cursor = Cursor::new(Vec::new());
+        let mut archive = zip::ZipWriter::new(cursor);
+        archive.start_file("repo-main/SKILL.md", zip::write::FileOptions::default()).unwrap();
+        archive.write_all(b"# Root skill").unwrap();
+        archive.start_file("repo-main/README.md", zip::write::FileOptions::default()).unwrap();
+        archive.write_all(b"Details").unwrap();
+        let isolated = isolate_github_skill_archive(&archive.finish().unwrap().into_inner(), "").unwrap();
+        let isolated = zip::ZipArchive::new(Cursor::new(isolated)).unwrap();
+        let mut names = isolated.file_names().collect::<Vec<_>>();
+        names.sort_unstable();
+        assert_eq!(names, vec!["github-skill/README.md", "github-skill/SKILL.md"]);
     }
 
     #[test]
