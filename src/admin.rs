@@ -168,7 +168,7 @@ async fn download_public_skill_archive(url: &Url, max_size: u64) -> Result<Vec<u
     let (host, addresses) = resolve_public_skill_host(url).await?;
     let mut builder = reqwest::Client::builder()
         .redirect(Policy::none())
-        .timeout(std::time::Duration::from_secs(30));
+        .timeout(std::time::Duration::from_secs(120));
     for address in addresses {
         builder = builder.resolve(&host, address);
     }
