@@ -77,7 +77,7 @@ TokenHub/
 
 位置：`src/skill_sources.rs`
 
-来源适配器统一返回 `SkillSearchResult`。GitHub 适配器通过公开代码搜索定位 `SKILL.md`；远端预览将 GitHub 目录地址转换为公开仓库归档，并抽取目标技能目录后复用 ZIP 校验流程。SkillHub 适配器使用 `https://api.skillhub.cn/api/skills`；自定义来源使用 JSON 索引。聚合搜索并发执行启用来源，并保留来源级错误以隔离单个来源故障。
+来源适配器统一返回 `SkillSearchResult`。GitHub 适配器通过公开代码搜索定位 `SKILL.md`；远端预览支持 GitHub 目录链接与 `SKILL.md` 链接，解析分支或标签后转换为公开仓库归档，并抽取目标技能目录后复用 ZIP 校验流程。SkillHub 适配器使用 `https://api.skillhub.cn/api/skills`；自定义来源使用 JSON 索引。聚合搜索并发执行启用来源，并保留来源级错误以隔离单个来源故障。
 
 ### 技能仓库管理页面
 

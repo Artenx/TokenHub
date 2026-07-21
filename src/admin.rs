@@ -11,14 +11,31 @@ use reqwest::{redirect::Policy, Url};
 use serde_json::json;
 use std::io::Cursor;
 
-fn github_archive_url_and_directory(url: &Url) -> Result<(Url, String), AppError> {
+struct GithubSkillLink {
+    archive_url: Url,
+    directory: String,
+}
+
+fn github_skill_link(url: &Url) -> Result<GithubSkillLink, AppError> {
     let parts: Vec<_> = url.path_segments().ok_or_else(|| AppError::BadRequest("GitHub 技能地址无效".to_string()))?.collect();
-    if parts.len() < 6 || parts[2] != "tree" || parts[3] != "HEAD" {
-        return Err(AppError::BadRequest("GitHub 技能地址必须指向 HEAD 分支中的目录".to_string()));
+    let (owner, repository, link_type, version) = match parts.as_slice() {
+        [owner, repository, link_type, version, ..] if !owner.is_empty() && !repository.is_empty() && !version.is_empty() => (*owner, *repository, *link_type, *version),
+        _ => return Err(AppError::BadRequest("GitHub 技能链接必须包含仓库、分支或标签和技能目录".to_string())),
+    };
+    let directory_parts = match link_type {
+        "tree" if parts.len() >= 6 => &parts[4..],
+        "blob" if parts.len() >= 6 && parts.last() == Some(&"SKILL.md") => &parts[4..parts.len() - 1],
+        "tree" => return Err(AppError::BadRequest("GitHub 目录链接必须包含技能目录".to_string())),
+        "blob" => return Err(AppError::BadRequest("GitHub 文件链接必须指向 SKILL.md".to_string())),
+        _ => return Err(AppError::BadRequest("GitHub 技能链接必须使用 tree 或 blob 路径".to_string())),
+    };
+    let directory = directory_parts.join("/");
+    if directory.is_empty() {
+        return Err(AppError::BadRequest("GitHub 技能链接必须包含技能目录".to_string()));
     }
-    let archive_url = Url::parse(&format!("https://codeload.github.com/{}/{}/zip/HEAD", parts[0], parts[1]))
+    let archive_url = Url::parse(&format!("https://codeload.github.com/{owner}/{repository}/zip/{version}"))
         .map_err(|error| AppError::Internal(error.to_string()))?;
-    Ok((archive_url, parts[4..].join("/")))
+    Ok(GithubSkillLink { archive_url, directory })
 }
 
 fn isolate_github_skill_archive(archive: &[u8], skill_directory: &str) -> Result<Vec<u8>, AppError> {
@@ -1492,8 +1509,8 @@ pub async fn preview_remote_skill(state: web::Data<AppState>, req: HttpRequest, 
         return Err(AppError::BadRequest("技能包下载地址不属于所选公开来源".to_string()));
     }
     let (download_url, github_skill_directory) = if matches!(source.source_type, SkillSourceType::Github) && archive_url.host_str() == Some("github.com") {
-        let (download_url, directory) = github_archive_url_and_directory(&archive_url)?;
-        (download_url, Some(directory))
+        let github_link = github_skill_link(&archive_url)?;
+        (github_link.archive_url, Some(github_link.directory))
     } else {
         (archive_url.clone(), None)
     };
@@ -1565,6 +1582,25 @@ mod benchmark_tests {
         let isolated = isolate_github_skill_archive(&archive.finish().unwrap().into_inner(), "skills/review").unwrap();
         let isolated = zip::ZipArchive::new(Cursor::new(isolated)).unwrap();
         assert_eq!(isolated.file_names().collect::<Vec<_>>(), vec!["review/SKILL.md", "review/README.md"]);
+    }
+
+    #[test]
+    fn github_skill_link_converts_branch_directory_to_archive() {
+        let link = github_skill_link(&Url::parse("https://github.com/acme/skills/tree/main/packages/review").unwrap()).unwrap();
+        assert_eq!(link.archive_url.as_str(), "https://codeload.github.com/acme/skills/zip/main");
+        assert_eq!(link.directory, "packages/review");
+    }
+
+    #[test]
+    fn github_skill_link_uses_skill_md_parent_directory() {
+        let link = github_skill_link(&Url::parse("https://github.com/acme/skills/blob/v1.2.0/packages/review/SKILL.md").unwrap()).unwrap();
+        assert_eq!(link.archive_url.as_str(), "https://codeload.github.com/acme/skills/zip/v1.2.0");
+        assert_eq!(link.directory, "packages/review");
+    }
+
+    #[test]
+    fn github_skill_link_rejects_non_skill_md_files() {
+        assert!(github_skill_link(&Url::parse("https://github.com/acme/skills/blob/main/packages/review/README.md").unwrap()).is_err());
     }
 
     #[test]
