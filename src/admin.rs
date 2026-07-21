@@ -7,9 +7,12 @@ use crate::state::AppState;
 use crate::validator::InputValidator;
 use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::Utc;
+use futures_util::StreamExt;
 use reqwest::{redirect::Policy, Url};
 use serde_json::json;
 use std::io::Cursor;
+use std::net::IpAddr;
+use tokio::net::lookup_host;
 
 struct GithubSkillLink {
     archive_url: Url,
@@ -118,6 +121,67 @@ fn parse_public_skill_link(input: &str) -> Result<Url, AppError> {
         return Err(AppError::BadRequest("技能链接必须使用 HTTPS 默认端口".to_string()));
     }
     Ok(url)
+}
+
+fn is_public_skill_ip(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(ip) => {
+            !(ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || ip.is_unspecified()
+                || ip.is_multicast()
+                || ip.is_broadcast())
+        }
+        IpAddr::V6(ip) => {
+            !(ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_multicast()
+                || ip.is_unique_local()
+                || ip.is_unicast_link_local())
+        }
+    }
+}
+
+async fn resolve_public_skill_host(url: &Url) -> Result<(String, Vec<std::net::SocketAddr>), AppError> {
+    let host = url.host_str().ok_or_else(|| AppError::BadRequest("技能链接缺少主机".to_string()))?.to_string();
+    let addresses: Vec<_> = lookup_host((host.as_str(), 443)).await
+        .map_err(|error| AppError::BadRequest(format!("无法解析技能链接主机: {error}")))?
+        .collect();
+    if addresses.is_empty() || addresses.iter().any(|address| !is_public_skill_ip(address.ip())) {
+        return Err(AppError::BadRequest("技能链接主机必须解析为公开单播地址".to_string()));
+    }
+    Ok((host, addresses))
+}
+
+async fn download_public_skill_archive(url: &Url, max_size: u64) -> Result<Vec<u8>, AppError> {
+    let (host, addresses) = resolve_public_skill_host(url).await?;
+    let mut builder = reqwest::Client::builder()
+        .redirect(Policy::none())
+        .timeout(std::time::Duration::from_secs(30));
+    for address in addresses {
+        builder = builder.resolve(&host, address);
+    }
+    let client = builder.build().map_err(|error| AppError::Internal(error.to_string()))?;
+    let response = client.get(url.clone()).send().await
+        .map_err(|error| AppError::BadRequest(format!("下载技能包失败: {error}")))?;
+    if !response.status().is_success() {
+        return Err(AppError::BadRequest(format!("下载技能包失败: HTTP {}", response.status())));
+    }
+    if response.content_length().is_some_and(|size| size > max_size) {
+        return Err(AppError::BadRequest("技能包下载内容超过总容量上限".to_string()));
+    }
+    let mut archive = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| AppError::BadRequest(format!("读取技能包失败: {error}")))?;
+        let next_size = archive.len().saturating_add(chunk.len());
+        if next_size > max_size as usize {
+            return Err(AppError::BadRequest("技能包下载内容超过总容量上限".to_string()));
+        }
+        archive.extend_from_slice(&chunk);
+    }
+    Ok(archive)
 }
 
 /// 获取所有端点
@@ -1614,6 +1678,23 @@ mod benchmark_tests {
         assert!(parse_public_skill_link("http://example.com/review.zip").is_err());
         assert!(parse_public_skill_link("https://user:secret@example.com/review.zip").is_err());
         assert!(parse_public_skill_link("https://example.com:8443/review.zip").is_err());
+    }
+
+    #[test]
+    fn public_skill_ip_filter_rejects_non_public_networks() {
+        for address in [
+            "127.0.0.1",
+            "10.0.0.1",
+            "169.254.1.1",
+            "0.0.0.0",
+            "224.0.0.1",
+            "::1",
+            "fc00::1",
+            "fe80::1",
+        ] {
+            assert!(!is_public_skill_ip(address.parse().unwrap()), "{address} should be blocked");
+        }
+        assert!(is_public_skill_ip("8.8.8.8".parse().unwrap()));
     }
 
     #[actix_rt::test]
