@@ -13,6 +13,7 @@
 - `.monkeycode/specs/api-data-replay/`：API 数据回放。
 - `.monkeycode/specs/model-benchmark/`：模型评测。
 - `.monkeycode/specs/skill-repository/`：本地技能管理与公开来源搜索。
+- `.monkeycode/specs/link-import/`：公开 GitHub 与 HTTPS ZIP 技能链接导入。
 
 ## 核心模块
 

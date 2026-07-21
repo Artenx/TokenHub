@@ -1668,7 +1668,9 @@ mod benchmark_tests {
         archive.write_all(b"# Other").unwrap();
         let isolated = isolate_github_skill_archive(&archive.finish().unwrap().into_inner(), "skills/review").unwrap();
         let isolated = zip::ZipArchive::new(Cursor::new(isolated)).unwrap();
-        assert_eq!(isolated.file_names().collect::<Vec<_>>(), vec!["review/SKILL.md", "review/README.md"]);
+        let mut names = isolated.file_names().collect::<Vec<_>>();
+        names.sort_unstable();
+        assert_eq!(names, vec!["review/README.md", "review/SKILL.md"]);
     }
 
     #[test]
