@@ -488,6 +488,8 @@ pub struct SkillSourceConfig {
     pub url: String,
     pub enabled: bool,
     #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default)]
     pub last_status: Option<String>,
     #[serde(default)]
     pub last_checked_at: Option<DateTime<Utc>>,

@@ -1588,7 +1588,7 @@ pub async fn preview_remote_skill(state: web::Data<AppState>, req: HttpRequest, 
     } else {
         (archive_url.clone(), None)
     };
-    let client = reqwest::Client::builder().redirect(Policy::none()).timeout(std::time::Duration::from_secs(30)).build()
+    let client = reqwest::Client::builder().redirect(Policy::none()).timeout(std::time::Duration::from_secs(120)).build()
         .map_err(|error| AppError::Internal(error.to_string()))?;
     let response = client.get(download_url).send().await.map_err(|error| AppError::BadRequest(format!("下载技能包失败: {}", error)))?;
     if !response.status().is_success() {

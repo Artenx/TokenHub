@@ -28,7 +28,7 @@ pub struct GitHubSkillSource {
 
 impl GitHubSkillSource {
     pub fn new(source: SkillSourceConfig) -> Result<Self> {
-        Ok(Self { source, client: source_client()? })
+        Ok(Self { source: source.clone(), client: source_client(source.api_key.as_deref())? })
     }
 }
 
@@ -44,6 +44,9 @@ impl SkillSourceAdapter for GitHubSkillSource {
                 .append_pair("per_page", &limit.min(100).to_string());
             let response = self.client.get(url).header("Accept", "application/vnd.github+json").send().await?;
             if !response.status().is_success() {
+                if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+                    bail!("GitHub 搜索需要认证，请在来源设置中填写 GitHub Personal Access Token");
+                }
                 bail!("GitHub 搜索请求失败: HTTP {}", response.status());
             }
             let payload: GitHubCodeSearchResponse = response.json().await?;
@@ -59,7 +62,7 @@ pub struct SkillHubSource {
 
 impl SkillHubSource {
     pub fn new(source: SkillSourceConfig) -> Result<Self> {
-        Ok(Self { source, client: source_client()? })
+        Ok(Self { source: source.clone(), client: source_client(source.api_key.as_deref())? })
     }
 }
 
@@ -73,7 +76,7 @@ impl SkillSourceAdapter for SkillHubSource {
             url.query_pairs_mut()
                 .append_pair("page", "1")
                 .append_pair("pageSize", &limit.min(100).to_string())
-                .append_pair("sortBy", "curated_score")
+                .append_pair("sortBy", "score")
                 .append_pair("order", "desc")
                 .append_pair("keyword", keyword.trim());
             let response = self.client.get(url).send().await?;
@@ -96,7 +99,7 @@ pub struct CustomIndexSource {
 
 impl CustomIndexSource {
     pub fn new(source: SkillSourceConfig) -> Result<Self> {
-        Ok(Self { source, client: source_client()? })
+        Ok(Self { source: source.clone(), client: source_client(source.api_key.as_deref())? })
     }
 }
 
@@ -146,8 +149,15 @@ fn deduplicate_outcomes(mut outcomes: Vec<SourceSearchOutcome>) -> Vec<SourceSea
     outcomes
 }
 
-fn source_client() -> Result<Client> {
-    Client::builder().timeout(SEARCH_TIMEOUT).user_agent("TokenHub Skill Repository").build().context("创建技能来源 HTTP 客户端失败")
+fn source_client(api_key: Option<&str>) -> Result<Client> {
+    let mut builder = Client::builder().timeout(SEARCH_TIMEOUT).user_agent("TokenHub Skill Repository");
+    if let Some(key) = api_key {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(reqwest::header::AUTHORIZATION, reqwest::header::HeaderValue::from_str(&format!("Bearer {}", key))
+            .context("技能来源 API Key 格式无效")?);
+        builder = builder.default_headers(headers);
+    }
+    builder.build().context("创建技能来源 HTTP 客户端失败")
 }
 
 #[derive(Deserialize)]

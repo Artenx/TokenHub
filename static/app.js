@@ -4103,8 +4103,8 @@ function renderLatencyLeaderboard(stats) {
 // ========== 技能仓库 ==========
 
 const defaultSkillSources = [
-    { id: 'github', name: 'GitHub', source_type: 'github', url: 'https://api.github.com', enabled: true, last_status: null, last_checked_at: null },
-    { id: 'skillhub', name: 'SkillHub', source_type: 'skillhub', url: 'https://api.skillhub.cn', enabled: true, last_status: null, last_checked_at: null },
+    { id: 'github', name: 'GitHub', source_type: 'github', url: 'https://api.github.com', enabled: true, api_key: null, last_status: null, last_checked_at: null },
+    { id: 'skillhub', name: 'SkillHub', source_type: 'skillhub', url: 'https://api.skillhub.cn', enabled: true, api_key: null, last_status: null, last_checked_at: null },
 ];
 
 async function loadSkillRepository() {
@@ -4315,26 +4315,32 @@ function renderSkillSources() {
     }
     container.innerHTML = currentSkillSources.map((source, index) => `<article class="skill-source-card" data-source-index="${index}">
         <div class="skill-source-card-title"><input class="source-enabled" type="checkbox" ${source.enabled ? 'checked' : ''} aria-label="启用 ${escapeAttr(source.name)}"><strong>${escapeHtml(source.name)}</strong><span class="source-status ${source.last_status && source.last_status !== 'available' ? 'error' : 'available'}">${escapeHtml(source.last_status || '未检测')}</span></div>
-        <div class="skill-source-fields"><label>名称<input class="source-name" value="${escapeAttr(source.name)}"></label><label>类型<select class="source-type" ${source.source_type !== 'custom_index' ? 'disabled' : ''}><option value="custom_index" selected>自定义公开索引</option></select></label><label>HTTPS 地址<input class="source-url" type="url" value="${escapeAttr(source.url)}"></label></div>
+        <div class="skill-source-fields"><label>名称<input class="source-name" value="${escapeAttr(source.name)}"></label><label>类型<select class="source-type" ${source.source_type !== 'custom_index' ? 'disabled' : ''}><option value="custom_index" selected>自定义公开索引</option></select></label><label>HTTPS 地址<input class="source-url" type="url" value="${escapeAttr(source.url)}"></label>${source.source_type !== 'custom_index' ? `<label>API Key<span class="source-api-key-hint">${source.api_key ? '（已设置，留空保持不变，输入新值覆盖）' : '（可选）'}</span><input class="source-api-key" type="password" value="" placeholder="${source.api_key ? '已设置，留空保持不变' : '留空使用未认证请求'}"></label>` : ''}</div>
         ${source.source_type === 'custom_index' ? `<button class="btn btn-danger btn-small" type="button" onclick="removeSkillSource(${index})">移除</button>` : ''}
     </article>`).join('');
 }
 
 function restoreDefaultSkillSources() { currentSkillSources = defaultSkillSources.map(source => ({ ...source })); renderSkillSources(); }
 function addCustomSkillSource() {
-    currentSkillSources.push({ id: `custom-${Date.now()}`, name: '自定义公开索引', source_type: 'custom_index', url: '', enabled: true, last_status: null, last_checked_at: null });
+    currentSkillSources.push({ id: `custom-${Date.now()}`, name: '自定义公开索引', source_type: 'custom_index', url: '', enabled: true, api_key: null, last_status: null, last_checked_at: null });
     renderSkillSources();
 }
 function removeSkillSource(index) { currentSkillSources.splice(index, 1); renderSkillSources(); }
 
 async function saveSkillSources() {
     const cards = [...document.querySelectorAll('.skill-source-card')];
-    const sources = cards.map((card, index) => ({
-        ...currentSkillSources[index],
-        enabled: card.querySelector('.source-enabled').checked,
-        name: card.querySelector('.source-name').value.trim(),
-        url: card.querySelector('.source-url').value.trim(),
-    }));
+    const sources = cards.map((card, index) => {
+        const existing = currentSkillSources[index] || {};
+        const apiKeyInput = card.querySelector('.source-api-key');
+        const newApiKey = apiKeyInput?.value.trim();
+        return {
+            ...existing,
+            enabled: card.querySelector('.source-enabled').checked,
+            name: card.querySelector('.source-name').value.trim(),
+            url: card.querySelector('.source-url').value.trim(),
+            api_key: newApiKey || existing.api_key || null,
+        };
+    });
     try {
         const response = await fetch(`${API_BASE}/skill-sources`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sources) });
         if (!response.ok) throw new Error(await readSkillApiError(response));
