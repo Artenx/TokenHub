@@ -4228,6 +4228,18 @@ async function previewSkillLink(event) {
 
 function showSkillImportPreview(preview, title) {
     document.getElementById('skill-modal-title').textContent = title;
+    if (preview.skills && preview.skills.length > 1) {
+        const anyConflict = preview.skills.some(skill => skill.conflict);
+        const rows = preview.skills.map(skill => `<li class="skill-collection-item">
+            <div class="skill-collection-info"><strong>${escapeHtml(skill.name)}</strong><code>${escapeHtml(skill.target_directory_name)}</code></div>
+            <div class="skill-collection-meta"><span>${skill.file_count} 个文件</span>${skill.conflict ? '<span class="skill-status invalid">已存在</span>' : ''}</div>
+        </li>`).join('');
+        const conflictText = anyConflict ? '<p class="skill-conflict">标记“已存在”的技能与本地目录同名，导入时将替换这些技能包。</p>' : '';
+        document.getElementById('skill-modal-body').innerHTML = `<div class="skill-preview-summary"><strong>${preview.skills.length} 个技能</strong><span>有效至 ${escapeHtml(formatDateTime(preview.expires_at))}</span></div>${conflictText}<h3>技能清单</h3><ul class="skill-collection-list">${rows}</ul>`;
+        document.getElementById('skill-modal-actions').innerHTML = `<button class="btn btn-secondary" type="button" onclick="hideModal('skill-modal')">取消</button><button class="btn ${anyConflict ? 'btn-danger' : 'btn-primary'}" type="button" onclick="confirmSkillImport('${escapeAttr(preview.id)}', ${anyConflict})">${anyConflict ? '导入并替换冲突项' : '全部导入'}</button>`;
+        showModal('skill-modal');
+        return;
+    }
     const conflictText = preview.conflict ? '<p class="skill-conflict">本地已存在同名目录。确认后将替换现有技能包。</p>' : '';
     document.getElementById('skill-modal-body').innerHTML = `<div class="skill-preview-summary"><strong>${escapeHtml(preview.target_directory_name)}</strong><span>${preview.files.length} 个文件</span><span>有效至 ${escapeHtml(formatDateTime(preview.expires_at))}</span></div>${conflictText}<h3>文件清单</h3><ul class="skill-file-list">${preview.files.map(file => `<li><code>${escapeHtml(file)}</code></li>`).join('')}</ul>`;
     const importAction = preview.conflict ? `confirmSkillImport('${escapeAttr(preview.id)}', true)` : `confirmSkillImport('${escapeAttr(preview.id)}', false)`;
@@ -4239,8 +4251,10 @@ async function confirmSkillImport(previewId, replace) {
     try {
         const response = await fetch(`${API_BASE}/skills/import`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ preview_id: previewId, replace }) });
         if (!response.ok) throw new Error(await readSkillApiError(response));
+        const result = await response.json();
+        const count = result.imported || 1;
         hideModal('skill-modal');
-        showToast(replace ? '技能包已替换' : '技能包已导入', 'success');
+        showToast(count > 1 ? `已导入 ${count} 个技能包` : (replace ? '技能包已替换' : '技能包已导入'), 'success');
         await loadLocalSkills();
         switchSkillView('local');
     } catch (error) { showToast(`导入失败: ${error.message}`, 'error'); }

@@ -54,7 +54,6 @@ fn isolate_github_skill_archive(archive: &[u8], skill_directory: &str) -> Result
     let prefix = format!("{}/", skill_directory.trim_matches('/'));
     let output = Cursor::new(Vec::new());
     let mut writer = zip::ZipWriter::new(output);
-    let mut has_skill_md = false;
     for index in 0..source.len() {
         let mut entry = source.by_index(index)
             .map_err(|error| AppError::BadRequest(format!("读取 GitHub 归档条目失败: {}", error)))?;
@@ -75,10 +74,6 @@ fn isolate_github_skill_archive(archive: &[u8], skill_directory: &str) -> Result
             .map_err(|error| AppError::Internal(format!("创建技能归档失败: {}", error)))?;
         std::io::copy(&mut entry, &mut writer)
             .map_err(|error| AppError::BadRequest(format!("读取 GitHub 技能内容失败: {}", error)))?;
-        has_skill_md |= relative_path == "SKILL.md";
-    }
-    if !has_skill_md {
-        return Err(AppError::BadRequest("GitHub 归档中未找到目标技能目录的 SKILL.md".to_string()));
     }
     writer.finish()
         .map(|cursor| cursor.into_inner())
@@ -1453,9 +1448,9 @@ pub async fn preview_skill_upload(state: web::Data<AppState>, req: HttpRequest, 
     check_admin_auth(&req, state.get_ref())?;
     let (root, config) = skill_repository_root(state.get_ref())?;
     let source = SkillOrigin { source_type: SkillSourceType::CustomIndex, url: "local-upload".to_string(), version: None, content_digest: None };
-    let (preview, package) = preview_zip_archive(&archive, source, &root, &config)
+    let (preview, packages) = preview_zip_archive(&archive, source, &root, &config)
         .map_err(|error| AppError::BadRequest(error.to_string()))?;
-    state.store_skill_import_preview(preview.clone(), package);
+    state.store_skill_import_preview(preview.clone(), packages);
     Ok(HttpResponse::Ok().json(preview))
 }
 
@@ -1465,31 +1460,44 @@ async fn import_preview(state: &AppState, input: SkillImportRequest, force_repla
     if !preview.valid {
         return Err(AppError::BadRequest(preview.validation_message.unwrap_or_else(|| "导入预览校验失败".to_string())));
     }
-    let package = state.get_prepared_skill_package(&input.preview_id)
+    let packages = state.get_prepared_skill_packages(&input.preview_id)
         .ok_or_else(|| AppError::NotFound("导入预览内容不存在或已过期".to_string()))?;
     let (root, _) = skill_repository_root(state)?;
     let replace = force_replace || input.replace;
-    if preview.conflict && !replace {
-        return Err(AppError::BadRequest("目标技能已存在，请明确选择替换".to_string()));
+    if !replace {
+        let conflicts: Vec<&str> = packages.iter()
+            .filter(|package| root.join(&package.directory_name).exists())
+            .map(|package| package.directory_name.as_str())
+            .collect();
+        if !conflicts.is_empty() {
+            return Err(AppError::BadRequest(format!("目标技能已存在，请明确选择替换: {}", conflicts.join(", "))));
+        }
     }
     let operation = if replace { "replace" } else { "import" };
-    if let Err(error) = import_skill_package(&root, &package, replace) {
-        let message = error.to_string();
-        add_skill_audit(state, operation, &preview.target_directory_name, Some(preview.source), "failed", Some(message.clone()));
-        return Err(AppError::Internal(message));
+    let mut directory_names = Vec::with_capacity(packages.len());
+    for package in &packages {
+        if let Err(error) = import_skill_package(&root, package, replace) {
+            let message = error.to_string();
+            add_skill_audit(state, operation, &package.directory_name, Some(preview.source.clone()), "failed", Some(message.clone()));
+            return Err(AppError::Internal(message));
+        }
+        add_skill_audit(state, operation, &package.directory_name, Some(preview.source.clone()), "success", None);
+        directory_names.push(package.directory_name.clone());
     }
     let mut skills = refresh_local_skills(state)?;
     let imported_at = Utc::now();
-    if let Some(skill) = skills.iter_mut().find(|skill| skill.directory_name == preview.target_directory_name) {
-        skill.source = Some(preview.source.clone());
-        skill.imported_at = Some(imported_at);
+    for skill in skills.iter_mut() {
+        if directory_names.contains(&skill.directory_name) {
+            skill.source = Some(preview.source.clone());
+            skill.imported_at = Some(imported_at);
+        }
     }
     let mut repository = state.skill_repository_state();
     repository.skills = skills;
     state.update_skill_repository_state(repository);
-    add_skill_audit(state, operation, &preview.target_directory_name, Some(preview.source), "success", None);
     state.remove_skill_import_preview(&input.preview_id);
-    Ok(HttpResponse::Ok().json(json!({ "success": true, "directory_name": preview.target_directory_name })))
+    let imported = directory_names.len();
+    Ok(HttpResponse::Ok().json(json!({ "success": true, "directory_name": directory_names.first().cloned().unwrap_or_default(), "directory_names": directory_names, "imported": imported })))
 }
 
 pub async fn import_skill(state: web::Data<AppState>, req: HttpRequest, body: web::Json<SkillImportRequest>) -> Result<HttpResponse, AppError> {
@@ -1604,8 +1612,8 @@ pub async fn preview_remote_skill(state: web::Data<AppState>, req: HttpRequest, 
         .transpose()?
         .unwrap_or_else(|| archive.to_vec());
     let origin = SkillOrigin { source_type: source.source_type, url: archive_url.to_string(), version: input.version, content_digest: None };
-    let (preview, package) = preview_zip_archive(&archive, origin, &root, &config).map_err(|error| AppError::BadRequest(error.to_string()))?;
-    state.store_skill_import_preview(preview.clone(), package);
+    let (preview, packages) = preview_zip_archive(&archive, origin, &root, &config).map_err(|error| AppError::BadRequest(error.to_string()))?;
+    state.store_skill_import_preview(preview.clone(), packages);
     Ok(HttpResponse::Ok().json(preview))
 }
 
@@ -1626,9 +1634,9 @@ pub async fn preview_skill_link(state: web::Data<AppState>, req: HttpRequest, bo
         .transpose()?
         .unwrap_or(archive);
     let origin = SkillOrigin { source_type, url: source_url.to_string(), version: None, content_digest: None };
-    let (preview, package) = preview_zip_archive(&archive, origin, &root, &config)
+    let (preview, packages) = preview_zip_archive(&archive, origin, &root, &config)
         .map_err(|error| AppError::BadRequest(error.to_string()))?;
-    state.store_skill_import_preview(preview.clone(), package);
+    state.store_skill_import_preview(preview.clone(), packages);
     Ok(HttpResponse::Ok().json(preview))
 }
 
@@ -1717,6 +1725,23 @@ mod benchmark_tests {
         let mut names = isolated.file_names().collect::<Vec<_>>();
         names.sort_unstable();
         assert_eq!(names, vec!["github-skill/README.md", "github-skill/SKILL.md"]);
+    }
+
+    #[test]
+    fn github_archive_preview_keeps_collection_layout_for_repository_root() {
+        let cursor = Cursor::new(Vec::new());
+        let mut archive = zip::ZipWriter::new(cursor);
+        archive.start_file("repo-main/README.md", zip::write::FileOptions::default()).unwrap();
+        archive.write_all(b"Collection").unwrap();
+        archive.start_file("repo-main/skills/one/SKILL.md", zip::write::FileOptions::default()).unwrap();
+        archive.write_all(b"# One").unwrap();
+        archive.start_file("repo-main/skills/two/SKILL.md", zip::write::FileOptions::default()).unwrap();
+        archive.write_all(b"# Two").unwrap();
+        let isolated = isolate_github_skill_archive(&archive.finish().unwrap().into_inner(), "").unwrap();
+        let isolated = zip::ZipArchive::new(Cursor::new(isolated)).unwrap();
+        let mut names = isolated.file_names().collect::<Vec<_>>();
+        names.sort_unstable();
+        assert_eq!(names, vec!["github-skill/README.md", "github-skill/skills/one/SKILL.md", "github-skill/skills/two/SKILL.md"]);
     }
 
     #[test]
@@ -1833,7 +1858,7 @@ mod benchmark_tests {
         let state = state().await;
         let sources = vec![SkillSourceConfig {
             id: "custom".to_string(), name: "Custom".to_string(), source_type: SkillSourceType::CustomIndex,
-            url: "http://example.test/index.json".to_string(), enabled: true, last_status: None, last_checked_at: None,
+            url: "http://example.test/index.json".to_string(), enabled: true, api_key: None, last_status: None, last_checked_at: None,
         }];
         assert!(update_skill_sources(state.clone(), authenticated_request(state.get_ref()), web::Json(sources)).await.is_err());
     }

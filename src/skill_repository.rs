@@ -1,4 +1,4 @@
-use crate::models::{LocalSkill, SkillImportPreview, SkillOrigin, SkillRepositoryConfig};
+use crate::models::{LocalSkill, SkillImportPreview, SkillImportPreviewItem, SkillOrigin, SkillRepositoryConfig};
 use anyhow::{bail, Context, Result};
 use chrono::{Duration, Utc};
 use std::fs;
@@ -89,9 +89,8 @@ pub fn preview_zip_archive(
     source: SkillOrigin,
     root: &Path,
     config: &SkillRepositoryConfig,
-) -> Result<(SkillImportPreview, PreparedSkillPackage)> {
+) -> Result<(SkillImportPreview, Vec<PreparedSkillPackage>)> {
     let mut zip = ZipArchive::new(Cursor::new(archive)).context("技能包归档格式无效")?;
-    let mut skill_roots = Vec::new();
     let mut total_size = 0_u64;
     let mut files = Vec::new();
 
@@ -136,46 +135,92 @@ pub fn preview_zip_archive(
         } else {
             raw_path
         };
-        if relative_path.file_name().is_some_and(|file_name| file_name == "SKILL.md") && relative_path.components().count() == 2 {
-            skill_roots.push(relative_path.parent().unwrap().to_path_buf());
-        }
         let mut contents = Vec::with_capacity(entry.size() as usize);
         entry.read_to_end(&mut contents)?;
         files.push(PreparedSkillFile { relative_path, contents });
     }
 
-    if skill_roots.len() != 1 {
-        bail!("技能包应包含唯一的根目录 SKILL.md");
-    }
-    let archive_root = skill_roots.pop().unwrap();
-    let directory_name = archive_root.file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| is_safe_directory_name(name))
-        .ok_or_else(|| anyhow::anyhow!("技能根目录名称无效"))?
-        .to_string();
+    // 候选技能根目录 = 每个 SKILL.md 的父目录；嵌套在其他候选根内部的根只保留最外层
+    let mut candidates: Vec<PathBuf> = files.iter()
+        .filter(|file| file.relative_path.file_name().is_some_and(|file_name| file_name == "SKILL.md"))
+        .filter_map(|file| file.relative_path.parent().map(Path::to_path_buf))
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .collect();
+    candidates.sort();
+    candidates.dedup();
+    let skill_roots: Vec<PathBuf> = candidates.iter()
+        .filter(|candidate| !candidates.iter().any(|other| other != *candidate && candidate.starts_with(other)))
+        .cloned()
+        .collect();
 
-    let mut package_files = Vec::with_capacity(files.len());
-    for file in files {
-        let relative_path = file.relative_path.strip_prefix(&archive_root)
-            .map_err(|_| anyhow::anyhow!("技能包包含技能根目录之外的文件"))?
-            .to_path_buf();
-        if relative_path.as_os_str().is_empty() {
-            bail!("技能包包含无效文件路径");
-        }
-        package_files.push(PreparedSkillFile { relative_path, contents: file.contents });
+    if skill_roots.is_empty() {
+        bail!("技能包中未找到 SKILL.md");
     }
-    let package = package_from_files(directory_name.clone(), package_files, config)?;
-    let preview = SkillImportPreview {
-        id: Uuid::new_v4().to_string(),
-        target_directory_name: directory_name,
-        source,
-        files: package.files.iter().map(|file| file.relative_path.to_string_lossy().to_string()).collect(),
-        valid: true,
-        validation_message: None,
-        conflict: root.join(&package.directory_name).exists(),
-        expires_at: Utc::now() + Duration::minutes(PREVIEW_TTL_MINUTES),
+
+    let single = skill_roots.len() == 1;
+    let mut packages = Vec::with_capacity(skill_roots.len());
+    let mut directory_names = std::collections::HashSet::new();
+    for archive_root in &skill_roots {
+        let directory_name = archive_root.file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| is_safe_directory_name(name))
+            .ok_or_else(|| anyhow::anyhow!("技能根目录名称无效"))?
+            .to_string();
+        if !directory_names.insert(directory_name.clone()) {
+            bail!("技能包包含重复的技能目录名称: {}", directory_name);
+        }
+        let mut package_files = Vec::new();
+        for file in &files {
+            if file.relative_path.starts_with(archive_root) {
+                let relative_path = file.relative_path.strip_prefix(archive_root)
+                    .map_err(|_| anyhow::anyhow!("技能包包含技能根目录之外的文件"))?
+                    .to_path_buf();
+                if relative_path.as_os_str().is_empty() {
+                    bail!("技能包包含无效文件路径");
+                }
+                package_files.push(PreparedSkillFile { relative_path, contents: file.contents.clone() });
+            } else if single {
+                bail!("技能包包含技能根目录之外的文件");
+            }
+        }
+        packages.push(package_from_files(directory_name, package_files, config)?);
+    }
+
+    let items: Vec<SkillImportPreviewItem> = packages.iter()
+        .map(|package| SkillImportPreviewItem {
+            target_directory_name: package.directory_name.clone(),
+            name: package.name.clone(),
+            file_count: package.files.len(),
+            conflict: root.join(&package.directory_name).exists(),
+        })
+        .collect();
+    let preview = if single {
+        let package = &packages[0];
+        SkillImportPreview {
+            id: Uuid::new_v4().to_string(),
+            target_directory_name: package.directory_name.clone(),
+            source,
+            files: package.files.iter().map(|file| file.relative_path.to_string_lossy().to_string()).collect(),
+            valid: true,
+            validation_message: None,
+            conflict: items[0].conflict,
+            expires_at: Utc::now() + Duration::minutes(PREVIEW_TTL_MINUTES),
+            skills: items,
+        }
+    } else {
+        SkillImportPreview {
+            id: Uuid::new_v4().to_string(),
+            target_directory_name: String::new(),
+            source,
+            files: Vec::new(),
+            valid: true,
+            validation_message: None,
+            conflict: items.iter().any(|item| item.conflict),
+            expires_at: Utc::now() + Duration::minutes(PREVIEW_TTL_MINUTES),
+            skills: items,
+        }
     };
-    Ok((preview, package))
+    Ok((preview, packages))
 }
 
 pub fn import_skill_package(root: &Path, package: &PreparedSkillPackage, replace: bool) -> Result<PathBuf> {
@@ -382,21 +427,61 @@ mod tests {
     fn preview_accepts_valid_skill_archive() {
         let tmp = TempDir::new().unwrap();
         let archive = archive(&[("example/SKILL.md", "# Example\nA useful skill."), ("example/reference.txt", "data")]);
-        let (preview, package) = preview_zip_archive(&archive, origin(), tmp.path(), &SkillRepositoryConfig::default()).unwrap();
+        let (preview, packages) = preview_zip_archive(&archive, origin(), tmp.path(), &SkillRepositoryConfig::default()).unwrap();
         assert!(preview.valid);
         assert!(!preview.conflict);
-        assert_eq!(package.directory_name, "example");
-        assert_eq!(package.name, "Example");
-        assert_eq!(package.files.len(), 2);
+        assert_eq!(preview.skills.len(), 1);
+        assert_eq!(packages.len(), 1);
+        assert_eq!(packages[0].directory_name, "example");
+        assert_eq!(packages[0].name, "Example");
+        assert_eq!(packages[0].files.len(), 2);
     }
 
     #[test]
-    fn preview_rejects_missing_or_multiple_skill_roots() {
+    fn preview_detects_skill_collection() {
+        let tmp = TempDir::new().unwrap();
+        let archive = archive(&[
+            ("README.md", "repo readme"),
+            ("skills/one/SKILL.md", "# One"),
+            ("skills/one/script.py", "print('one')"),
+            ("skills/two/SKILL.md", "# Two"),
+        ]);
+        let (preview, packages) = preview_zip_archive(&archive, origin(), tmp.path(), &SkillRepositoryConfig::default()).unwrap();
+        assert_eq!(packages.len(), 2);
+        assert_eq!(preview.skills.len(), 2);
+        assert!(preview.files.is_empty());
+        assert!(preview.target_directory_name.is_empty());
+        let mut names: Vec<_> = packages.iter().map(|package| package.directory_name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["one", "two"]);
+        let one = packages.iter().find(|package| package.directory_name == "one").unwrap();
+        assert_eq!(one.files.len(), 2);
+        assert!(one.files.iter().all(|file| !file.relative_path.starts_with("..")));
+    }
+
+    #[test]
+    fn preview_collection_keeps_outermost_skill_root() {
+        let tmp = TempDir::new().unwrap();
+        let archive = archive(&[("one/SKILL.md", "# One"), ("one/nested/SKILL.md", "# Nested")]);
+        let (preview, packages) = preview_zip_archive(&archive, origin(), tmp.path(), &SkillRepositoryConfig::default()).unwrap();
+        assert_eq!(packages.len(), 1);
+        assert_eq!(preview.skills.len(), 1);
+        assert_eq!(packages[0].directory_name, "one");
+        assert!(packages[0].files.iter().any(|file| file.relative_path == Path::new("nested/SKILL.md")));
+    }
+
+    #[test]
+    fn preview_rejects_duplicate_directory_names() {
+        let tmp = TempDir::new().unwrap();
+        let archive = archive(&[("a/review/SKILL.md", "# A"), ("b/review/SKILL.md", "# B")]);
+        assert!(preview_zip_archive(&archive, origin(), tmp.path(), &SkillRepositoryConfig::default()).is_err());
+    }
+
+    #[test]
+    fn preview_rejects_missing_skill_root() {
         let tmp = TempDir::new().unwrap();
         let missing = archive(&[("example/readme.md", "missing")]);
         assert!(preview_zip_archive(&missing, origin(), tmp.path(), &SkillRepositoryConfig::default()).is_err());
-        let multiple = archive(&[("one/SKILL.md", "# One"), ("two/SKILL.md", "# Two")]);
-        assert!(preview_zip_archive(&multiple, origin(), tmp.path(), &SkillRepositoryConfig::default()).is_err());
     }
 
     #[test]
@@ -411,13 +496,13 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path().join("skills");
         let first = archive(&[("example/SKILL.md", "# First")]);
-        let (_, first_package) = preview_zip_archive(&first, origin(), &root, &SkillRepositoryConfig::default()).unwrap();
-        import_skill_package(&root, &first_package, false).unwrap();
+        let (_, first_packages) = preview_zip_archive(&first, origin(), &root, &SkillRepositoryConfig::default()).unwrap();
+        import_skill_package(&root, &first_packages[0], false).unwrap();
 
         let second = archive(&[("example/SKILL.md", "# Second")]);
-        let (_, second_package) = preview_zip_archive(&second, origin(), &root, &SkillRepositoryConfig::default()).unwrap();
-        assert!(import_skill_package(&root, &second_package, false).is_err());
-        import_skill_package(&root, &second_package, true).unwrap();
+        let (_, second_packages) = preview_zip_archive(&second, origin(), &root, &SkillRepositoryConfig::default()).unwrap();
+        assert!(import_skill_package(&root, &second_packages[0], false).is_err());
+        import_skill_package(&root, &second_packages[0], true).unwrap();
         assert_eq!(fs::read_to_string(root.join("example/SKILL.md")).unwrap(), "# Second");
         assert_eq!(scan_local_skills(&root, &SkillRepositoryConfig::default()).unwrap()[0].name, "Second");
     }
@@ -427,8 +512,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path().join("skills");
         let archive = archive(&[("example/SKILL.md", "# Example")]);
-        let (_, package) = preview_zip_archive(&archive, origin(), &root, &SkillRepositoryConfig::default()).unwrap();
-        import_skill_package(&root, &package, false).unwrap();
+        let (_, packages) = preview_zip_archive(&archive, origin(), &root, &SkillRepositoryConfig::default()).unwrap();
+        import_skill_package(&root, &packages[0], false).unwrap();
         assert!(delete_skill_package(&root, "example", "wrong").is_err());
         delete_skill_package(&root, "example", "example").unwrap();
         assert!(!root.join("example").exists());

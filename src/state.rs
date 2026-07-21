@@ -69,7 +69,7 @@ pub struct AppState {
     /// 待确认的导入预览，仅保存在内存中
     pub skill_import_previews: RwLock<HashMap<String, SkillImportPreview>>,
     /// 预览对应的已校验包内容，仅在预览有效期内保存在内存中
-    pub prepared_skill_packages: RwLock<HashMap<String, PreparedSkillPackage>>,
+    pub prepared_skill_packages: RwLock<HashMap<String, Vec<PreparedSkillPackage>>>,
     /// 技能仓库独立持久化文件路径
     pub skill_repository_state_path: PathBuf,
 }
@@ -1246,8 +1246,8 @@ impl AppState {
         self.mark_dirty();
     }
 
-    pub fn store_skill_import_preview(&self, preview: SkillImportPreview, package: PreparedSkillPackage) {
-        self.prepared_skill_packages.write().insert(preview.id.clone(), package);
+    pub fn store_skill_import_preview(&self, preview: SkillImportPreview, packages: Vec<PreparedSkillPackage>) {
+        self.prepared_skill_packages.write().insert(preview.id.clone(), packages);
         self.skill_import_previews.write().insert(preview.id.clone(), preview);
     }
 
@@ -1259,7 +1259,7 @@ impl AppState {
         previews.get(id).cloned()
     }
 
-    pub fn get_prepared_skill_package(&self, id: &str) -> Option<PreparedSkillPackage> {
+    pub fn get_prepared_skill_packages(&self, id: &str) -> Option<Vec<PreparedSkillPackage>> {
         self.get_skill_import_preview(id)?;
         self.prepared_skill_packages.read().get(id).cloned()
     }
@@ -1813,6 +1813,7 @@ exposed_apis = []
                     source_type: SkillSourceType::Github,
                     url: "https://api.github.com".to_string(),
                     enabled: true,
+                    api_key: None,
                     last_status: Some("ok".to_string()),
                     last_checked_at: Some(Utc::now()),
                 }],
@@ -1865,9 +1866,10 @@ exposed_apis = []
             validation_message: None,
             conflict: false,
             expires_at: Utc::now() - chrono::Duration::seconds(1),
-        }, PreparedSkillPackage {
+            skills: Vec::new(),
+        }, vec![PreparedSkillPackage {
             directory_name: "example-skill".to_string(), name: "Example".to_string(), description: String::new(), skill_md_summary: String::new(), files: Vec::new(),
-        });
+        }]);
 
         assert!(state.get_skill_import_preview("expired-preview").is_none());
         assert!(state.skill_import_previews.read().is_empty());
@@ -1886,8 +1888,8 @@ exposed_apis = []
 "#;
         let config: AppConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.skill_repository.root_dir, "skills");
-        assert_eq!(config.skill_repository.max_file_count, 500);
-        assert_eq!(config.skill_repository.max_file_size_bytes, 5 * 1024 * 1024);
-        assert_eq!(config.skill_repository.max_total_size_bytes, 50 * 1024 * 1024);
+        assert_eq!(config.skill_repository.max_file_count, 3000);
+        assert_eq!(config.skill_repository.max_file_size_bytes, 50 * 1024 * 1024);
+        assert_eq!(config.skill_repository.max_total_size_bytes, 200 * 1024 * 1024);
     }
 }

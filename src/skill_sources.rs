@@ -295,7 +295,7 @@ mod tests {
     use anyhow::anyhow;
 
     fn source(id: &str, source_type: SkillSourceType) -> SkillSourceConfig {
-        SkillSourceConfig { id: id.to_string(), name: id.to_string(), source_type, url: "https://example.test".to_string(), enabled: true, last_status: None, last_checked_at: None }
+        SkillSourceConfig { id: id.to_string(), name: id.to_string(), source_type, url: "https://example.test".to_string(), enabled: true, api_key: None, last_status: None, last_checked_at: None }
     }
 
     #[test]

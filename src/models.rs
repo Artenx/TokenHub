@@ -557,6 +557,18 @@ pub struct SkillImportPreview {
     pub validation_message: Option<String>,
     pub conflict: bool,
     pub expires_at: DateTime<Utc>,
+    /// 集合导入时包含的技能条目；单技能导入时仅含一项
+    #[serde(default)]
+    pub skills: Vec<SkillImportPreviewItem>,
+}
+
+/// 集合导入预览中的单个技能条目
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillImportPreviewItem {
+    pub target_directory_name: String,
+    pub name: String,
+    pub file_count: usize,
+    pub conflict: bool,
 }
 
 /// 技能仓库操作审计记录
