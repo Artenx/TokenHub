@@ -84,6 +84,25 @@ pub struct RemoteSkillPreviewRequest {
     version: Option<String>,
 }
 
+#[derive(serde::Deserialize)]
+pub struct SkillLinkPreviewRequest {
+    url: String,
+}
+
+fn parse_public_skill_link(input: &str) -> Result<Url, AppError> {
+    let url = Url::parse(input.trim()).map_err(|_| AppError::BadRequest("技能链接无效".to_string()))?;
+    if url.scheme() != "https" || url.host_str().is_none() {
+        return Err(AppError::BadRequest("技能链接必须使用 HTTPS".to_string()));
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(AppError::BadRequest("技能链接不能包含访问凭据".to_string()));
+    }
+    if url.port_or_known_default() != Some(443) {
+        return Err(AppError::BadRequest("技能链接必须使用 HTTPS 默认端口".to_string()));
+    }
+    Ok(url)
+}
+
 /// 获取所有端点
 pub async fn list_endpoints(
     state: web::Data<AppState>,
@@ -1546,6 +1565,19 @@ mod benchmark_tests {
         let isolated = isolate_github_skill_archive(&archive.finish().unwrap().into_inner(), "skills/review").unwrap();
         let isolated = zip::ZipArchive::new(Cursor::new(isolated)).unwrap();
         assert_eq!(isolated.file_names().collect::<Vec<_>>(), vec!["review/SKILL.md", "review/README.md"]);
+    }
+
+    #[test]
+    fn parse_public_skill_link_accepts_https_without_credentials() {
+        let url = parse_public_skill_link("https://example.com/skills/review.zip").unwrap();
+        assert_eq!(url.host_str(), Some("example.com"));
+    }
+
+    #[test]
+    fn parse_public_skill_link_rejects_insecure_or_credentialed_urls() {
+        assert!(parse_public_skill_link("http://example.com/review.zip").is_err());
+        assert!(parse_public_skill_link("https://user:secret@example.com/review.zip").is_err());
+        assert!(parse_public_skill_link("https://example.com:8443/review.zip").is_err());
     }
 
     #[actix_rt::test]
