@@ -229,6 +229,7 @@ function initEventListeners() {
     document.querySelectorAll('.benchmark-tab').forEach(btn => btn.addEventListener('click', () => switchBenchmarkView(btn.dataset.benchmarkView)));
     document.getElementById('btn-refresh-skills')?.addEventListener('click', loadLocalSkills);
     document.getElementById('skill-upload-input')?.addEventListener('change', previewSkillUpload);
+    document.getElementById('skill-link-import-form')?.addEventListener('submit', previewSkillLink);
     document.getElementById('skill-search-form')?.addEventListener('submit', searchSkills);
     document.querySelectorAll('.skill-tab').forEach(btn => btn.addEventListener('click', () => switchSkillView(btn.dataset.skillView)));
     document.getElementById('btn-add-skill-source')?.addEventListener('click', addCustomSkillSource);
@@ -4204,6 +4205,25 @@ async function previewSkillUpload(event) {
         if (!response.ok) throw new Error(await readSkillApiError(response));
         showSkillImportPreview(await response.json(), '上传技能包');
     } catch (error) { showToast(`上传预览失败: ${error.message}`, 'error'); }
+}
+
+async function previewSkillLink(event) {
+    event.preventDefault();
+    const input = document.getElementById('skill-link-import-url');
+    const url = input.value.trim();
+    if (!url) return;
+    try {
+        const response = await fetch(`${API_BASE}/skill-links/preview`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url }),
+        });
+        if (!response.ok) throw new Error(await readSkillApiError(response));
+        input.value = '';
+        showSkillImportPreview(await response.json(), '链接技能预览');
+    } catch (error) {
+        showToast(`链接预览失败: ${error.message}`, 'error');
+    }
 }
 
 function showSkillImportPreview(preview, title) {

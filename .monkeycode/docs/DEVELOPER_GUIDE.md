@@ -38,7 +38,7 @@ cargo check
 
 技能仓库管理接口位于 `src/admin.rs`，每个接口先执行管理员会话校验。上传预览接收原始 ZIP 请求体，已校验的包内容与预览 ID 一起存放在内存中，成功导入后立即移除。远端归档预览要求 HTTPS 和来源域名匹配，并使用无重定向 HTTP 客户端；GitHub 目录链接和 `SKILL.md` 链接会解析分支或标签、转换为公开仓库归档，再抽取选中的技能目录。
 
-技能仓库前端由 `static/index.html`、`static/app.js` 和 `static/style.css` 共同维护。页面通过 `switchTab('skill-repository')` 加载本地技能和来源设置；ZIP 文件以原始二进制发送到上传预览接口，远端归档使用 `download_locator` 请求来源预览接口。导入、替换和删除操作必须保留确认步骤，搜索结果须展示来源级失败信息。
+技能仓库前端由 `static/index.html`、`static/app.js` 和 `static/style.css` 共同维护。页面通过 `switchTab('skill-repository')` 加载本地技能和来源设置；ZIP 文件以原始二进制发送到上传预览接口，远端归档使用 `download_locator` 请求来源预览接口。链接导入表单将公开 GitHub 或 ZIP 地址提交至 `/admin/api/skill-links/preview`。导入、替换和删除操作必须保留确认步骤，搜索结果须展示来源级失败信息。
 
 ## 测试
 

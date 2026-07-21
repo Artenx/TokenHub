@@ -342,7 +342,14 @@
                                 <div class="skill-header-actions"><button id="btn-refresh-skills" class="btn btn-secondary btn-small">刷新本地技能</button><label class="btn btn-primary btn-small" for="skill-upload-input">上传 ZIP</label><input id="skill-upload-input" type="file" accept=".zip,application/zip" hidden></div>
                             </div>
                             <div class="skill-tabs" role="tablist"><button class="skill-tab active" data-skill-view="local" type="button">本地技能</button><button class="skill-tab" data-skill-view="search" type="button">联网搜索</button><button class="skill-tab" data-skill-view="sources" type="button">来源设置</button></div>
-                            <div id="skill-local-view" class="skill-view"><div id="skill-local-list" class="skill-card-grid"><p class="skill-empty">正在读取本地技能...</p></div></div>
+                            <div id="skill-local-view" class="skill-view">
+                                <form id="skill-link-import-form" class="skill-link-import-form">
+                                    <div><strong>通过链接导入</strong><span>支持 GitHub 技能目录、GitHub `SKILL.md` 和公开 HTTPS ZIP 链接。</span></div>
+                                    <input id="skill-link-import-url" type="url" placeholder="粘贴公开技能链接" autocomplete="url" required>
+                                    <button class="btn btn-primary" type="submit">预览导入</button>
+                                </form>
+                                <div id="skill-local-list" class="skill-card-grid"><p class="skill-empty">正在读取本地技能...</p></div>
+                            </div>
                             <div id="skill-search-view" class="skill-view" style="display:none"><form id="skill-search-form" class="skill-search-form"><input id="skill-search-keyword" type="search" placeholder="按技能名称、用途或关键词搜索" autocomplete="off" required><button class="btn btn-primary" type="submit">搜索公开技能</button></form><div id="skill-source-status" class="skill-source-status"></div><div id="skill-search-results" class="skill-result-list"><p class="skill-empty">输入关键词后搜索已启用的公开来源。</p></div></div>
                             <div id="skill-sources-view" class="skill-view" style="display:none"><div class="skill-source-toolbar"><p>启用的来源会参与后续搜索。自定义索引必须提供 HTTPS 地址。</p><button id="btn-add-skill-source" class="btn btn-secondary btn-small" type="button">添加公开索引</button></div><div id="skill-source-list" class="skill-source-list"></div><div class="skill-source-actions"><button id="btn-save-skill-sources" class="btn btn-primary" type="button">保存来源设置</button></div></div>
                         </div>
