@@ -63,8 +63,9 @@
 | `POST` | `/admin/api/skills/import` | 确认导入预览。 |
 | `POST` | `/admin/api/skills/{id}/replace` | 用已确认预览替换本地技能包。 |
 | `DELETE` | `/admin/api/skills/{id}` | 使用目录名二次确认后删除技能包。 |
+| `POST` | `/admin/api/skill-links/preview` | 校验公开 HTTPS ZIP 或 GitHub 技能链接并生成导入预览。 |
 | `GET` | `/admin/api/skill-sources/search` | 搜索公开技能来源。 |
 | `POST` | `/admin/api/skill-sources/preview` | 下载公开来源归档并生成导入预览。 |
 | `GET`、`PUT` | `/admin/api/skill-sources` | 查询或更新来源配置。 |
 
-来源配置地址必须是 HTTPS。远端预览禁止跨来源下载地址，并禁用 HTTP 重定向；GitHub 允许 `github.com` 与 `codeload.github.com` 的公开归档地址。
+来源配置地址必须是 HTTPS。远端预览禁止跨来源下载地址，并禁用 HTTP 重定向；GitHub 允许 `github.com` 与 `codeload.github.com` 的公开归档地址。链接预览支持 GitHub 目录或 `SKILL.md` 链接，以及公开 HTTPS ZIP 链接；链接下载会校验 URL 凭据、默认 HTTPS 端口和公开单播解析地址。

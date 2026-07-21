@@ -251,6 +251,7 @@ async fn main() -> std::io::Result<()> {
             .route("/admin/api/skills/{id}/replace", web::post().to(admin::replace_skill))
             .route("/admin/api/skills/{id}", web::get().to(admin::get_skill))
             .route("/admin/api/skills/{id}", web::delete().to(admin::delete_skill))
+            .route("/admin/api/skill-links/preview", web::post().to(admin::preview_skill_link))
             .route("/admin/api/skill-sources/search", web::get().to(admin::search_skill_sources))
             .route("/admin/api/skill-sources/preview", web::post().to(admin::preview_remote_skill))
             .route("/admin/api/skill-sources", web::get().to(admin::list_skill_sources))

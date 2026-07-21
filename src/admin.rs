@@ -1599,6 +1599,29 @@ pub async fn preview_remote_skill(state: web::Data<AppState>, req: HttpRequest, 
     Ok(HttpResponse::Ok().json(preview))
 }
 
+pub async fn preview_skill_link(state: web::Data<AppState>, req: HttpRequest, body: web::Json<SkillLinkPreviewRequest>) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    let input = body.into_inner();
+    let source_url = parse_public_skill_link(&input.url)?;
+    let (download_url, github_skill_directory, source_type) = if source_url.host_str() == Some("github.com") {
+        let github_link = github_skill_link(&source_url)?;
+        (github_link.archive_url, Some(github_link.directory), SkillSourceType::Github)
+    } else {
+        (source_url.clone(), None, SkillSourceType::CustomIndex)
+    };
+    let (root, config) = skill_repository_root(state.get_ref())?;
+    let archive = download_public_skill_archive(&download_url, config.max_total_size_bytes).await?;
+    let archive = github_skill_directory
+        .map(|directory| isolate_github_skill_archive(&archive, &directory))
+        .transpose()?
+        .unwrap_or(archive);
+    let origin = SkillOrigin { source_type, url: source_url.to_string(), version: None, content_digest: None };
+    let (preview, package) = preview_zip_archive(&archive, origin, &root, &config)
+        .map_err(|error| AppError::BadRequest(error.to_string()))?;
+    state.store_skill_import_preview(preview.clone(), package);
+    Ok(HttpResponse::Ok().json(preview))
+}
+
 #[cfg(test)]
 mod benchmark_tests {
     use super::*;
@@ -1695,6 +1718,16 @@ mod benchmark_tests {
             assert!(!is_public_skill_ip(address.parse().unwrap()), "{address} should be blocked");
         }
         assert!(is_public_skill_ip("8.8.8.8".parse().unwrap()));
+    }
+
+    #[actix_rt::test]
+    async fn skill_link_preview_requires_admin_session() {
+        let state = state().await;
+        let request = TestRequest::default().to_http_request();
+        let response = preview_skill_link(state, request, web::Json(SkillLinkPreviewRequest {
+            url: "https://example.com/review.zip".to_string(),
+        })).await;
+        assert!(response.is_err());
     }
 
     #[actix_rt::test]
