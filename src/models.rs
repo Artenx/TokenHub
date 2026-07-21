@@ -455,7 +455,7 @@ pub struct SkillRepositoryConfig {
 }
 
 fn default_skill_repository_root() -> String { "skills".to_string() }
-fn default_skill_max_file_size() -> u64 { 5 * 1024 * 1024 }
+fn default_skill_max_file_size() -> u64 { 20 * 1024 * 1024 }
 fn default_skill_max_file_count() -> usize { 500 }
 fn default_skill_max_total_size() -> u64 { 200 * 1024 * 1024 }
 
