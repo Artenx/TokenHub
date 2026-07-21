@@ -4272,7 +4272,10 @@ async function searchSkills(event) {
         if (!response.ok) throw new Error(await readSkillApiError(response));
         const payload = await response.json();
         currentSkillSources = payload.sources || currentSkillSources;
-        statuses.innerHTML = (payload.outcomes || []).map(outcome => `<span class="source-status ${outcome.error ? 'error' : 'available'}">${escapeHtml(outcome.source_id)}: ${escapeHtml(outcome.error || `${outcome.results.length} 个结果`)}</span>`).join('');
+        statuses.innerHTML = (payload.outcomes || []).map(outcome => {
+            const text = outcome.error || `${outcome.results.length} 个结果`;
+            return `<span class="source-status ${outcome.error ? 'error' : 'available'}" title="${escapeAttr(outcome.source_id)}: ${escapeAttr(text)}">${escapeHtml(outcome.source_id)}: ${escapeHtml(text)}</span>`;
+        }).join('');
         const matches = (payload.outcomes || []).flatMap(outcome => outcome.results || []);
         renderSkillSearchResults(matches);
     } catch (error) { results.innerHTML = `<p class="skill-empty skill-error">搜索失败: ${escapeHtml(error.message)}</p>`; }
@@ -4281,7 +4284,7 @@ async function searchSkills(event) {
 function renderSkillSearchResults(results) {
     const container = document.getElementById('skill-search-results');
     if (!results.length) { container.innerHTML = '<div class="skill-empty-panel"><strong>没有找到匹配的公开技能</strong><span>调整关键词，或检查来源设置中的启用状态。</span></div>'; return; }
-    container.innerHTML = results.map(result => `<article class="skill-result-card">
+    container.innerHTML = results.map(result => `<article class="skill-result-card" data-source="${escapeAttr(result.source_id)}">
         <div><div class="skill-result-heading"><h3>${escapeHtml(result.name)}</h3><span>${escapeHtml(result.source_id)}</span></div><p>${escapeHtml(result.description || '未提供描述')}</p><div class="skill-card-meta"><span>${escapeHtml(result.author || '未知作者')}</span><span>${result.popularity == null ? '无热度数据' : `热度 ${formatNumber(result.popularity)}`}</span><span>${escapeHtml(result.license || '许可证未知')}</span></div></div>
         <div class="skill-result-actions"><a href="${escapeAttr(result.source_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-small">来源</a><button class="btn btn-primary btn-small" type="button" onclick="previewRemoteSkill('${escapeAttr(result.source_id)}', '${escapeAttr(result.download_locator)}', '${escapeAttr(result.version || '')}')">预览导入</button></div>
     </article>`).join('');
@@ -4313,8 +4316,8 @@ function renderSkillSources() {
         container.innerHTML = '<div class="skill-empty-panel"><strong>尚未配置公开来源</strong><span>添加 GitHub、SkillHub 预置来源后即可开始联网搜索。</span><button class="btn btn-secondary btn-small" type="button" onclick="restoreDefaultSkillSources()">添加预置来源</button></div>';
         return;
     }
-    container.innerHTML = currentSkillSources.map((source, index) => `<article class="skill-source-card" data-source-index="${index}">
-        <div class="skill-source-card-title"><input class="source-enabled" type="checkbox" ${source.enabled ? 'checked' : ''} aria-label="启用 ${escapeAttr(source.name)}"><strong>${escapeHtml(source.name)}</strong><span class="source-status ${source.last_status && source.last_status !== 'available' ? 'error' : 'available'}">${escapeHtml(source.last_status || '未检测')}</span></div>
+    container.innerHTML = currentSkillSources.map((source, index) => `<article class="skill-source-card" data-source-index="${index}" data-source-type="${escapeAttr(source.source_type)}">
+        <div class="skill-source-card-title"><input class="source-enabled" type="checkbox" ${source.enabled ? 'checked' : ''} aria-label="启用 ${escapeAttr(source.name)}"><strong>${escapeHtml(source.name)}</strong><span class="skill-source-type-badge ${escapeAttr(source.source_type)}">${escapeHtml(source.source_type === 'custom_index' ? '自定义' : source.source_type)}</span><span class="source-status ${source.last_status && source.last_status !== 'available' ? 'error' : 'available'}" title="${escapeAttr(source.last_status || '')}">${escapeHtml(source.last_status || '未检测')}</span></div>
         <div class="skill-source-fields"><label>名称<input class="source-name" value="${escapeAttr(source.name)}"></label><label>类型<select class="source-type" ${source.source_type !== 'custom_index' ? 'disabled' : ''}><option value="custom_index" selected>自定义公开索引</option></select></label><label>HTTPS 地址<input class="source-url" type="url" value="${escapeAttr(source.url)}"></label>${source.source_type !== 'custom_index' ? `<label>API Key<span class="source-api-key-hint">${source.api_key ? '（已设置，留空保持不变，输入新值覆盖）' : '（可选）'}</span><input class="source-api-key" type="password" value="" placeholder="${source.api_key ? '已设置，留空保持不变' : '留空使用未认证请求'}"></label>` : ''}</div>
         ${source.source_type === 'custom_index' ? `<button class="btn btn-danger btn-small" type="button" onclick="removeSkillSource(${index})">移除</button>` : ''}
     </article>`).join('');
