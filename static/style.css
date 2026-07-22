@@ -1714,6 +1714,11 @@ nav {
 .skill-install-link { justify-content: space-between; padding: 0.55rem 0.7rem; border: 1px solid var(--border-color); border-radius: 0.5rem; }
 .skill-install-link div { display: flex; flex-wrap: wrap; gap: 0.4rem 0.7rem; align-items: center; }
 
+.skill-install-created { display: grid; gap: 0.55rem; margin-top: 1rem; padding: 0.75rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 0.5rem; }
+.skill-install-created div { display: flex; gap: 0.5rem; }
+.skill-install-created input { flex: 1; min-width: 0; padding: 0.5rem 0.625rem; font-family: var(--font-mono); font-size: 0.75rem; }
+.skill-install-created span { color: var(--text-secondary); font-size: 0.8125rem; }
+
 .skill-skeleton { padding: 1.125rem; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--background); height: 200px; display: flex; flex-direction: column; gap: 0.75rem; }
 .skeleton-line { height: 0.75rem; border-radius: 999px; background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--muted) 50%, var(--bg-tertiary) 75%); background-size: 200% 100%; animation: skeletonShimmer 1.5s infinite; }
 .skeleton-line.title { height: 1rem; width: 60%; margin-top: 0.5rem; }
