@@ -251,6 +251,9 @@ async fn main() -> std::io::Result<()> {
             .route("/admin/api/skills/{id}/replace", web::post().to(admin::replace_skill))
             .route("/admin/api/skills/{id}/tags", web::put().to(admin::update_skill_tags))
             .route("/admin/api/skills/{id}/download", web::get().to(admin::download_skill))
+            .route("/admin/api/skills/{id}/install-links", web::get().to(admin::list_skill_install_links))
+            .route("/admin/api/skills/{id}/install-links", web::post().to(admin::create_skill_install_link))
+            .route("/admin/api/skills/{id}/install-links/{link_id}/revoke", web::post().to(admin::revoke_skill_install_link))
             .route("/admin/api/skills/{id}", web::get().to(admin::get_skill))
             .route("/admin/api/skills/{id}", web::delete().to(admin::delete_skill))
             .route("/admin/api/skill-links/preview", web::post().to(admin::preview_skill_link))
@@ -258,6 +261,7 @@ async fn main() -> std::io::Result<()> {
             .route("/admin/api/skill-sources/preview", web::post().to(admin::preview_remote_skill))
             .route("/admin/api/skill-sources", web::get().to(admin::list_skill_sources))
             .route("/admin/api/skill-sources", web::put().to(admin::update_skill_sources))
+            .route("/skill-install/{token}", web::get().to(admin::download_skill_install_link))
             // 静态文件（管理后台前端）
             .service(fs::Files::new("/admin", "static").index_file("index.html"))
             // 常见浏览器请求处理

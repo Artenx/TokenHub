@@ -1831,6 +1831,7 @@ exposed_apis = []
                     tags: Vec::new(),
                 }],
                 audit_entries: Vec::new(),
+                install_links: Vec::new(),
             });
             state.add_skill_audit_entry(SkillAuditEntry {
                 id: "audit-1".to_string(),

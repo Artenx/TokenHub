@@ -588,6 +588,28 @@ pub struct SkillAuditEntry {
     pub error_message: Option<String>,
 }
 
+/// 本地技能的远程安装链接记录。访问令牌仅以摘要形式持久化。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillInstallLink {
+    pub id: String,
+    pub directory_name: String,
+    pub token_digest: String,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    #[serde(default)]
+    pub revoked_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub single_use: bool,
+    #[serde(default)]
+    pub downloaded_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub download_count: u64,
+    #[serde(default)]
+    pub snapshot_path: String,
+    #[serde(default)]
+    pub snapshot_size_bytes: u64,
+}
+
 /// 技能仓库独立持久化状态
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SkillRepositoryState {
@@ -597,6 +619,8 @@ pub struct SkillRepositoryState {
     pub skills: Vec<LocalSkill>,
     #[serde(default)]
     pub audit_entries: Vec<SkillAuditEntry>,
+    #[serde(default)]
+    pub install_links: Vec<SkillInstallLink>,
 }
 
 /// 全局配置

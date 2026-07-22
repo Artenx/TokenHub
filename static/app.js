@@ -4224,15 +4224,57 @@ async function openSkillDetails(id) {
         const response = await fetch(`${API_BASE}/skills/${encodeURIComponent(id)}`);
         if (!response.ok) throw new Error(await readSkillApiError(response));
         const { skill, skill_md: skillMd, files } = await response.json();
+        const linksResponse = await fetch(`${API_BASE}/skills/${encodeURIComponent(skill.directory_name)}/install-links`);
+        if (!linksResponse.ok) throw new Error(await readSkillApiError(linksResponse));
+        const installLinks = await linksResponse.json();
         document.getElementById('skill-modal-title').textContent = skill.name;
         const tagChips = (skill.tags || []).map(tag => `<span class="skill-tag skill-tag-removable">${escapeHtml(tag)}<button type="button" aria-label="移除标签 ${escapeAttr(tag)}" onclick="removeSkillTag('${escapeAttr(skill.directory_name)}', '${escapeAttr(tag)}')">×</button></span>`).join('');
         document.getElementById('skill-modal-body').innerHTML = `<div class="skill-detail-meta"><span class="skill-status ${skill.validation_status === 'valid' ? 'valid' : 'invalid'}">${escapeHtml(skill.validation_status)}</span><code>${escapeHtml(skill.directory_name)}</code><span>${skill.file_count} 个文件</span></div><p class="skill-detail-description">${escapeHtml(skill.description || '未提供描述')}</p>
             <h3>标签</h3><div class="skill-tag-editor"><div class="skill-tag-editor-chips">${tagChips || '<span class="skill-tag-empty">暂无标签</span>'}</div><div class="skill-tag-editor-input"><input id="skill-tag-input" type="text" maxlength="20" placeholder="添加标签，如：前端ui" onkeydown="if(event.key==='Enter'){event.preventDefault();addSkillTag('${escapeAttr(skill.directory_name)}')}"><button class="btn btn-secondary btn-small" type="button" onclick="addSkillTag('${escapeAttr(skill.directory_name)}')">添加</button></div></div>
+            <h3>远程安装链接</h3><div class="skill-install-create"><select id="skill-install-expiry"><option value="60">1 小时</option><option value="1440" selected>24 小时</option><option value="10080">7 天</option><option value="43200">30 天</option><option value="custom">自定义</option></select><input id="skill-install-custom-expiry" type="number" min="60" max="525600" placeholder="分钟" hidden><label><input id="skill-install-single-use" type="checkbox"> 首次下载后失效</label><button class="btn btn-secondary btn-small" type="button" onclick="createSkillInstallLink('${escapeAttr(skill.directory_name)}')">创建并复制</button></div><div class="skill-install-links">${renderSkillInstallLinks(skill.directory_name, installLinks)}</div>
             <h3>SKILL.md</h3><pre class="skill-code">${escapeHtml(skillMd)}</pre><h3>文件清单</h3><ul class="skill-file-list">${files.map(file => `<li><code>${escapeHtml(file)}</code></li>`).join('')}</ul>`;
         document.getElementById('skill-modal-actions').innerHTML = `<button class="btn btn-secondary" type="button" onclick="hideModal('skill-modal')">关闭</button><a class="btn btn-primary" href="${API_BASE}/skills/${encodeURIComponent(skill.directory_name)}/download" download>下载离线包</a><button class="btn btn-danger" type="button" onclick="confirmSkillDelete('${escapeAttr(skill.directory_name)}')">删除技能</button>`;
         showModal('skill-modal');
     } catch (error) { showToast(`无法读取技能详情: ${error.message}`, 'error'); }
 }
+
+function renderSkillInstallLinks(directoryName, links) {
+    if (!links.length) return '<span class="skill-tag-empty">暂无远程安装链接</span>';
+    const now = Date.now();
+    return links.map(link => {
+        const status = link.revoked_at ? '已撤销' : new Date(link.expires_at).getTime() <= now ? '已过期' : link.single_use && link.downloaded_at ? '已使用' : '有效';
+        const revoke = status === '有效' ? `<button class="btn btn-small btn-danger" type="button" onclick="revokeSkillInstallLink('${escapeAttr(directoryName)}', '${escapeAttr(link.id)}')">撤销</button>` : '';
+        return `<div class="skill-install-link"><div><strong>${status}</strong><span>有效至 ${escapeHtml(formatDateTime(link.expires_at))}</span><span>下载 ${link.download_count} 次${link.single_use ? '，首次下载失效' : ''}</span></div>${revoke}</div>`;
+    }).join('');
+}
+
+async function createSkillInstallLink(directoryName) {
+    const expiry = document.getElementById('skill-install-expiry').value;
+    const custom = document.getElementById('skill-install-custom-expiry');
+    const expiresInMinutes = Number(expiry === 'custom' ? custom.value : expiry);
+    if (!Number.isInteger(expiresInMinutes) || expiresInMinutes < 60 || expiresInMinutes > 525600) { showToast('自定义有效期需在 60 至 525600 分钟之间', 'error'); return; }
+    try {
+        const response = await fetch(`${API_BASE}/skills/${encodeURIComponent(directoryName)}/install-links`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expires_in_minutes: expiresInMinutes, single_use: document.getElementById('skill-install-single-use').checked }) });
+        if (!response.ok) throw new Error(await readSkillApiError(response));
+        const result = await response.json();
+        await navigator.clipboard.writeText(result.url);
+        showToast('远程安装链接已创建并复制', 'success');
+        openSkillDetails(`local:${directoryName}`);
+    } catch (error) { showToast(`创建安装链接失败: ${error.message}`, 'error'); }
+}
+
+async function revokeSkillInstallLink(directoryName, linkId) {
+    try {
+        const response = await fetch(`${API_BASE}/skills/${encodeURIComponent(directoryName)}/install-links/${encodeURIComponent(linkId)}/revoke`, { method: 'POST' });
+        if (!response.ok) throw new Error(await readSkillApiError(response));
+        showToast('远程安装链接已撤销', 'success');
+        openSkillDetails(`local:${directoryName}`);
+    } catch (error) { showToast(`撤销安装链接失败: ${error.message}`, 'error'); }
+}
+
+document.addEventListener('change', event => {
+    if (event.target?.id === 'skill-install-expiry') document.getElementById('skill-install-custom-expiry').hidden = event.target.value !== 'custom';
+});
 
 async function saveSkillTags(directoryName, tags) {
     const response = await fetch(`${API_BASE}/skills/${encodeURIComponent(directoryName)}/tags`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tags }) });

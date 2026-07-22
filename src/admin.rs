@@ -6,12 +6,13 @@ use crate::skill_sources::{adapters_for_sources, search_sources};
 use crate::state::AppState;
 use crate::validator::InputValidator;
 use actix_web::{web, HttpRequest, HttpResponse};
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use futures_util::StreamExt;
 use reqwest::{redirect::Policy, Url};
 use serde_json::json;
 use std::io::Cursor;
 use std::net::IpAddr;
+use sha2::{Digest, Sha256};
 use tokio::net::lookup_host;
 
 struct GithubSkillLink {
@@ -1492,6 +1493,103 @@ fn add_skill_audit(state: &AppState, operation: &str, directory_name: &str, sour
         status: status.to_string(),
         error_message,
     });
+}
+
+#[derive(serde::Deserialize)]
+pub struct CreateSkillInstallLinkRequest {
+    pub expires_in_minutes: i64,
+    #[serde(default)]
+    pub single_use: bool,
+}
+
+fn install_token_digest(token: &str) -> String {
+    format!("{:x}", Sha256::digest(token.as_bytes()))
+}
+
+fn install_link_view(link: &SkillInstallLink) -> serde_json::Value {
+    json!({
+        "id": link.id,
+        "directory_name": link.directory_name,
+        "created_at": link.created_at,
+        "expires_at": link.expires_at,
+        "revoked_at": link.revoked_at,
+        "single_use": link.single_use,
+        "downloaded_at": link.downloaded_at,
+        "download_count": link.download_count,
+    })
+}
+
+pub async fn list_skill_install_links(state: web::Data<AppState>, req: HttpRequest, path: web::Path<String>) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    let directory_name = path.into_inner();
+    refresh_local_skills(state.get_ref())?;
+    let repository = state.skill_repository_state();
+    if !repository.skills.iter().any(|skill| skill.directory_name == directory_name) {
+        return Err(AppError::NotFound("技能包不存在".to_string()));
+    }
+    let links: Vec<_> = repository.install_links.iter().filter(|link| link.directory_name == directory_name).map(install_link_view).collect();
+    Ok(HttpResponse::Ok().json(links))
+}
+
+pub async fn create_skill_install_link(state: web::Data<AppState>, req: HttpRequest, path: web::Path<String>, body: web::Json<CreateSkillInstallLinkRequest>) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    let directory_name = path.into_inner();
+    let input = body.into_inner();
+    if !(60..=525_600).contains(&input.expires_in_minutes) {
+        return Err(AppError::BadRequest("有效期需在 1 小时至 365 天之间".to_string()));
+    }
+    refresh_local_skills(state.get_ref())?;
+    let repository = state.skill_repository_state();
+    if !repository.skills.iter().any(|skill| skill.directory_name == directory_name) {
+        return Err(AppError::NotFound("技能包不存在".to_string()));
+    }
+    let (root, config) = skill_repository_root(state.get_ref())?;
+    let archive = build_skill_archive(&root, &directory_name, &config).map_err(|error| AppError::BadRequest(error.to_string()))?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let snapshot_dir = root.join(".install-links");
+    std::fs::create_dir_all(&snapshot_dir).map_err(|error| AppError::Internal(format!("创建安装快照目录失败: {}", error)))?;
+    let snapshot_path = format!(".install-links/{}.zip", id);
+    std::fs::write(root.join(&snapshot_path), &archive).map_err(|error| AppError::Internal(format!("保存安装快照失败: {}", error)))?;
+    let token = uuid::Uuid::new_v4().simple().to_string();
+    let now = Utc::now();
+    let link = SkillInstallLink { id: id.clone(), directory_name: directory_name.clone(), token_digest: install_token_digest(&token), created_at: now, expires_at: now + Duration::minutes(input.expires_in_minutes), revoked_at: None, single_use: input.single_use, downloaded_at: None, download_count: 0, snapshot_path, snapshot_size_bytes: archive.len() as u64 };
+    let mut repository = state.skill_repository_state();
+    repository.install_links.push(link.clone());
+    state.update_skill_repository_state(repository);
+    add_skill_audit(state.get_ref(), "install-link-create", &directory_name, None, "success", None);
+    let origin = req.connection_info().host().to_string();
+    Ok(HttpResponse::Ok().json(json!({ "link": install_link_view(&link), "url": format!("https://{}/skill-install/{}", origin, token) })))
+}
+
+pub async fn revoke_skill_install_link(state: web::Data<AppState>, req: HttpRequest, path: web::Path<(String, String)>) -> Result<HttpResponse, AppError> {
+    check_admin_auth(&req, state.get_ref())?;
+    let (directory_name, link_id) = path.into_inner();
+    let mut repository = state.skill_repository_state();
+    let link = repository.install_links.iter_mut().find(|link| link.id == link_id && link.directory_name == directory_name)
+        .ok_or_else(|| AppError::NotFound("安装链接不存在".to_string()))?;
+    if link.revoked_at.is_none() { link.revoked_at = Some(Utc::now()); }
+    let response = install_link_view(link);
+    state.update_skill_repository_state(repository);
+    add_skill_audit(state.get_ref(), "install-link-revoke", &directory_name, None, "success", None);
+    Ok(HttpResponse::Ok().json(response))
+}
+
+pub async fn download_skill_install_link(state: web::Data<AppState>, path: web::Path<String>) -> Result<HttpResponse, AppError> {
+    let token = path.into_inner();
+    let digest = install_token_digest(&token);
+    let now = Utc::now();
+    let mut repository = state.skill_repository_state();
+    let Some(link) = repository.install_links.iter_mut().find(|link| link.token_digest == digest) else { return Ok(HttpResponse::NotFound().finish()); };
+    let valid = link.revoked_at.is_none() && now < link.expires_at && (!link.single_use || link.downloaded_at.is_none());
+    let (root, _) = skill_repository_root(state.get_ref()).map_err(|_| AppError::NotFound("安装链接不存在".to_string()))?;
+    if !valid || !root.join(&link.directory_name).is_dir() { return Ok(HttpResponse::NotFound().finish()); }
+    let archive = match std::fs::read(root.join(&link.snapshot_path)) { Ok(archive) => archive, Err(_) => return Ok(HttpResponse::NotFound().finish()) };
+    link.download_count += 1;
+    link.downloaded_at = Some(now);
+    let directory_name = link.directory_name.clone();
+    state.update_skill_repository_state(repository);
+    add_skill_audit(state.get_ref(), "install-link-download", &directory_name, None, "success", None);
+    Ok(HttpResponse::Ok().content_type("application/zip").insert_header(("Content-Disposition", format!("attachment; filename=\"{}.zip\"", directory_name))).body(archive))
 }
 
 pub async fn list_skills(state: web::Data<AppState>, req: HttpRequest) -> Result<HttpResponse, AppError> {
