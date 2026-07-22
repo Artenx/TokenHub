@@ -637,18 +637,15 @@ async function loadDashboard() {
 
         // 更新统计卡片
         document.getElementById('stat-total').textContent = stats.total_endpoints;
-        document.getElementById('stat-active-sub').textContent = `活跃: ${stats.active_endpoints}`;
-        document.getElementById('stat-used').textContent = formatNumber(stats.total_tokens_used);
+        document.getElementById('stat-active-sub').textContent = `活跃: ${stats.active_endpoints} · 池: ${stats.total_pools} · API: ${stats.total_exposed_apis}`;
         document.getElementById('stat-total-consumed').textContent = formatNumber(stats.total_tokens_consumed);
-        document.getElementById('stat-limit-sub').textContent = `限额: ${formatLimit(stats.total_tokens_limit)}`;
+        document.getElementById('stat-consumed-sub').textContent = `池: ${stats.total_pools} · API: ${stats.total_exposed_apis}`;
         document.getElementById('stat-usage-rate').textContent = `${usageRate}%`;
         document.getElementById('stat-usage-bar').style.width = `${usageBar}%`;
         document.getElementById('stat-usage-bar').className = `progress-fill ${usageClass}`;
+        document.getElementById('stat-usage-sub').textContent = `已用 ${formatNumber(stats.total_tokens_used)} / 限额 ${formatLimit(stats.total_tokens_limit)}`;
         document.getElementById('stat-requests').textContent = formatNumber(stats.total_requests);
         document.getElementById('stat-errors-sub').textContent = `错误: ${totalErrors}`;
-        document.getElementById('stat-pools').textContent = stats.total_pools;
-        document.getElementById('stat-apis').textContent = stats.total_exposed_apis;
-        document.getElementById('stat-total-errors').textContent = totalErrors;
 
         // 更新各概览区域
         renderPoolsOverview();
@@ -693,16 +690,16 @@ function renderPoolsOverview() {
     };
 
     container.innerHTML = currentPools.map(pool => `
-        <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: var(--bg-tertiary); border-radius: var(--radius-sm); margin-bottom: 8px;">
-            <div>
-                <span style="font-weight: 500;">${escapeHtml(pool.name)}</span>
-                <span style="font-size: 0.75rem; color: var(--text-tertiary); margin-left: 8px;">${algoNames[pool.schedule_algorithm] || pool.schedule_algorithm}</span>
+        <div class="overview-item">
+            <div class="overview-item-main">
+                <span class="overview-item-title">${escapeHtml(pool.name)}</span>
+                <span class="overview-item-badge">${algoNames[pool.schedule_algorithm] || pool.schedule_algorithm}</span>
             </div>
-            <div style="display: flex; gap: 16px; font-size: 0.8125rem; color: var(--text-secondary);">
-                <span>端点: ${pool.endpoint_count}</span>
-                <span>活跃: ${pool.active_endpoint_count}</span>
-                <span>Token: ${formatNumber(pool.total_tokens_used)}</span>
-                <span>请求: ${formatNumber(pool.total_requests)}</span>
+            <div class="overview-item-stats">
+                <span>端点 ${pool.endpoint_count}</span>
+                <span>活跃 ${pool.active_endpoint_count}</span>
+                <span>Token ${formatNumber(pool.total_tokens_used)}</span>
+                <span>请求 ${formatNumber(pool.total_requests)}</span>
             </div>
         </div>
     `).join('');
@@ -721,18 +718,18 @@ function renderApisOverview() {
     container.innerHTML = currentApis.map(api => {
         const statusClass = api.enabled ? 'active' : 'disabled';
         const statusText = api.enabled ? '启用' : '禁用';
-        
+
         return `
-            <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: var(--bg-tertiary); border-radius: var(--radius-sm); margin-bottom: 8px;">
-                <div>
-                    <span style="font-weight: 500;">${escapeHtml(api.name)}</span>
-                    <span style="font-size: 0.8125rem; color: var(--accent); margin-left: 8px; font-family: var(--font-mono);">${escapeHtml(api.prefix)}</span>
+            <div class="overview-item">
+                <div class="overview-item-main">
+                    <span class="overview-item-title">${escapeHtml(api.name)}</span>
+                    <span class="overview-item-prefix">${escapeHtml(api.prefix)}</span>
                 </div>
-                <div style="display: flex; align-items: center; gap: 12px; font-size: 0.8125rem;">
-                    <span style="color: var(--text-secondary);">${api.api_type.toUpperCase()}</span>
-                    <span style="color: var(--text-secondary);">池: ${api.pool_name || '-'}</span>
-                    <span style="color: var(--text-secondary);">端点: ${api.endpoint_count}</span>
-                    <span class="status-badge ${statusClass}" style="font-size: 0.6875rem;">${statusText}</span>
+                <div class="overview-item-stats">
+                    <span>${api.api_type.toUpperCase()}</span>
+                    <span>池 ${escapeHtml(api.pool_name || '-')}</span>
+                    <span>端点 ${api.endpoint_count}</span>
+                    <span class="status-badge ${statusClass}">${statusText}</span>
                 </div>
             </div>
         `;

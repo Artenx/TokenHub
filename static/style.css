@@ -677,6 +677,100 @@ nav {
     margin-bottom: 1.5rem;
 }
 
+.chart-grid-2 {
+    grid-template-columns: repeat(2, 1fr);
+}
+
+.chart-card-full {
+    margin-bottom: 1rem;
+}
+
+/* === OVERVIEW LISTS === */
+.overview-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.5rem;
+}
+
+.overview-grid .section {
+    margin-bottom: 1.5rem;
+}
+
+.overview-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.625rem 0.75rem;
+    background: var(--bg-tertiary);
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    margin-bottom: 0.5rem;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.overview-item:hover {
+    border-color: rgba(180, 83, 9, 0.3);
+    background: var(--background);
+}
+
+.overview-item:last-child {
+    margin-bottom: 0;
+}
+
+.overview-item-main {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+.overview-item-title {
+    font-weight: 500;
+    color: var(--foreground);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.overview-item-badge {
+    flex-shrink: 0;
+    padding: 0.125rem 0.5rem;
+    border-radius: 999px;
+    background: var(--primary-muted);
+    color: var(--primary);
+    font-size: 0.625rem;
+    font-weight: 600;
+}
+
+.overview-item-prefix {
+    flex-shrink: 0;
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+}
+
+.overview-item-stats {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.375rem 0.875rem;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.endpoint-overview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 0.75rem;
+}
+
+.endpoint-overview-grid .endpoint-card {
+    margin-bottom: 0;
+}
+
 .chart-card {
     background: var(--card);
     border: 1px solid var(--border);
@@ -1329,6 +1423,16 @@ nav {
 
     .chart-grid {
         grid-template-columns: 1fr;
+    }
+
+    .overview-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .overview-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.375rem;
     }
 
     .endpoint-details {

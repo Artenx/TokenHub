@@ -101,16 +101,6 @@
                             </div>
                             <div class="stat-card stat-card-accent">
                                 <div class="stat-icon">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                                </div>
-                                <div class="stat-info">
-                                    <h3>已用 Token</h3>
-                                    <div class="stat-value" id="stat-used">0</div>
-                                    <div class="stat-sub" id="stat-limit-sub">限额: 0</div>
-                                </div>
-                            </div>
-                            <div class="stat-card stat-card-accent">
-                                <div class="stat-icon">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></svg>
                                 </div>
                                 <div class="stat-info">
@@ -119,6 +109,7 @@
                                     <div class="progress-bar" style="height: 4px; margin-top: 8px;">
                                         <div class="progress-fill" id="stat-usage-bar" style="width: 0%"></div>
                                     </div>
+                                    <div class="stat-sub" id="stat-usage-sub">已用 0 / 限额 0</div>
                                 </div>
                             </div>
                             <div class="stat-card stat-card-accent">
@@ -131,9 +122,6 @@
                                     <div class="stat-sub" id="stat-errors-sub">错误: 0</div>
                                 </div>
                             </div>
-                        </div>
-
-                        <div class="stats-grid">
                             <div class="stat-card stat-card-accent">
                                 <div class="stat-icon">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
@@ -141,45 +129,20 @@
                                 <div class="stat-info">
                                     <h3>总消耗 Token</h3>
                                     <div class="stat-value" id="stat-total-consumed">0</div>
-                                </div>
-                            </div>
-                            <div class="stat-card stat-card-accent">
-                                <div class="stat-icon">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
-                                </div>
-                                <div class="stat-info">
-                                    <h3>端点池</h3>
-                                    <div class="stat-value" id="stat-pools">0</div>
-                                </div>
-                            </div>
-                            <div class="stat-card stat-card-accent">
-                                <div class="stat-icon">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-                                </div>
-                                <div class="stat-info">
-                                    <h3>API 接口</h3>
-                                    <div class="stat-value" id="stat-apis">0</div>
-                                </div>
-                            </div>
-                            <div class="stat-card stat-card-accent">
-                                <div class="stat-icon">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                                </div>
-                                <div class="stat-info">
-                                    <h3>总错误数</h3>
-                                    <div class="stat-value" id="stat-total-errors">0</div>
+                                    <div class="stat-sub" id="stat-consumed-sub">池: 0 · API: 0</div>
                                 </div>
                             </div>
                         </div>
 
-                        <div class="chart-grid">
+                        <div class="chart-card chart-card-full">
+                            <div class="chart-header">Token 使用量</div>
+                            <div id="token-usage-chart"></div>
+                        </div>
+
+                        <div class="chart-grid chart-grid-2">
                             <div class="chart-card">
                                 <div class="chart-header">端点状态分布</div>
                                 <div id="endpoint-status-chart"></div>
-                            </div>
-                            <div class="chart-card">
-                                <div class="chart-header">Token 使用量</div>
-                                <div id="token-usage-chart"></div>
                             </div>
                             <div class="chart-card">
                                 <div class="chart-header">请求量统计</div>
@@ -187,19 +150,21 @@
                             </div>
                         </div>
 
-                        <div class="section">
-                            <h2>端点池概览</h2>
-                            <div id="pools-overview"></div>
-                        </div>
+                        <div class="overview-grid">
+                            <div class="section">
+                                <h2>端点池概览</h2>
+                                <div id="pools-overview"></div>
+                            </div>
 
-                        <div class="section">
-                            <h2>API 接口</h2>
-                            <div id="apis-overview"></div>
+                            <div class="section">
+                                <h2>API 接口</h2>
+                                <div id="apis-overview"></div>
+                            </div>
                         </div>
 
                         <div class="section">
                             <h2>端点状态</h2>
-                            <div id="endpoints-overview"></div>
+                            <div id="endpoints-overview" class="endpoint-overview-grid"></div>
                         </div>
                     </div>
 
