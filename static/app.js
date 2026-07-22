@@ -4214,7 +4214,7 @@ function renderLocalSkills(skills) {
             <p>${escapeHtml(skill.description || skill.validation_message || '未提供描述')}</p>
             ${tags ? `<div class="skill-card-tags">${tags}</div>` : ''}
             <div class="skill-card-meta"><span>${skill.file_count} 个文件</span><span title="${escapeAttr(source)}">${escapeHtml(source)}</span></div>
-            <div class="skill-card-actions"><button class="btn btn-small" type="button" onclick="openSkillDetails('${escapeAttr(skill.id)}')">查看详情</button><button class="btn btn-small btn-secondary" type="button" onclick="openSkillShare('${escapeAttr(skill.directory_name)}', '${escapeAttr(skill.name)}')">分享</button><a class="btn btn-small" href="${API_BASE}/skills/${encodeURIComponent(skill.directory_name)}/download" download>下载</a><button class="btn btn-small btn-danger" type="button" onclick="confirmSkillDelete('${escapeAttr(skill.directory_name)}')">删除</button></div>
+            <div class="skill-card-actions"><button class="btn btn-small" type="button" onclick="openSkillDetails('${escapeAttr(skill.id)}')">查看详情</button><button class="btn btn-small btn-primary-light" type="button" onclick="openSkillShare('${escapeAttr(skill.directory_name)}', '${escapeAttr(skill.name)}')">分享</button><a class="btn btn-small" href="${API_BASE}/skills/${encodeURIComponent(skill.directory_name)}/download" download>下载</a><button class="btn btn-small btn-danger" type="button" onclick="confirmSkillDelete('${escapeAttr(skill.directory_name)}')">删除</button></div>
         </article>`;
     }).join('');
 }
@@ -4255,13 +4255,13 @@ function renderSkillInstallLinks(directoryName, links) {
     return links.map(link => {
         const status = link.revoked_at ? '已撤销' : new Date(link.expires_at).getTime() <= now ? '已过期' : link.single_use && link.downloaded_at ? '已使用' : '有效';
         const revoke = status === '有效' ? `<button class="btn btn-small btn-danger" type="button" onclick="revokeSkillInstallLink('${escapeAttr(directoryName)}', '${escapeAttr(link.id)}')">撤销</button>` : '';
-        return `<div class="skill-install-link"><div><strong>${status}</strong><span>有效至 ${escapeHtml(formatDateTime(link.expires_at))}</span><span>下载 ${link.download_count} 次${link.single_use ? '，首次下载失效' : ''}</span></div>${revoke}</div>`;
+        return `<div class="skill-install-link"><div><strong class="skill-install-status-${status === '有效' ? 'valid' : status === '已过期' ? 'expired' : status === '已使用' ? 'consumed' : 'revoked'}">${status}</strong><span>至 ${escapeHtml(formatDateTime(link.expires_at))}</span><span>下载 ${link.download_count} 次${link.single_use ? '，单次' : ''}</span></div>${revoke}</div>`;
     }).join('');
 }
 
 function openSkillShare(directoryName, skillName) {
     document.getElementById('skill-modal-title').textContent = `${skillName} · 分享技能`;
-    document.getElementById('skill-modal-body').innerHTML = `<p class="skill-detail-description">创建后可将链接发给安装客户端。链接内容固定为创建时的技能快照。</p><div class="skill-install-create"><select id="skill-install-expiry"><option value="60">1 小时</option><option value="1440" selected>24 小时</option><option value="10080">7 天</option><option value="43200">30 天</option><option value="custom">自定义</option></select><input id="skill-install-custom-expiry" type="number" min="60" max="525600" placeholder="分钟" hidden><label><input id="skill-install-single-use" type="checkbox"> 首次下载后失效</label><button class="btn btn-primary btn-small" type="button" onclick="createSkillInstallLink('${escapeAttr(directoryName)}')">创建链接</button></div><div id="skill-install-created"></div>`;
+    document.getElementById('skill-modal-body').innerHTML = `<div class="skill-share-hint">创建后可将链接发给安装客户端。链接内容固定为创建时的技能快照。</div><div class="skill-share-card"><h4>创建参数</h4><div class="skill-share-form"><div class="skill-share-field"><label>有效期</label><select id="skill-install-expiry"><option value="60">1 小时</option><option value="1440" selected>24 小时</option><option value="10080">7 天</option><option value="43200">30 天</option><option value="custom">自定义</option></select><input id="skill-install-custom-expiry" type="number" min="60" max="525600" placeholder="分钟" hidden></div><div class="skill-share-field"><label class="skill-share-checkbox"><input id="skill-install-single-use" type="checkbox"> 首次下载后失效</label></div><button class="btn btn-primary btn-small" type="button" onclick="createSkillInstallLink('${escapeAttr(directoryName)}')">创建链接</button></div></div><div id="skill-install-created"></div>`;
     document.getElementById('skill-modal-actions').innerHTML = `<button class="btn btn-secondary" type="button" onclick="hideModal('skill-modal')">关闭</button><button class="btn btn-secondary" type="button" onclick="openSkillInstallHistory('${escapeAttr(directoryName)}', '${escapeAttr(skillName)}')">历史链接</button>`;
     showModal('skill-modal');
 }
@@ -4301,7 +4301,7 @@ async function createSkillInstallLink(directoryName) {
         const response = await fetch(`${API_BASE}/skills/${encodeURIComponent(directoryName)}/install-links`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expires_in_minutes: expiresInMinutes, single_use: document.getElementById('skill-install-single-use').checked }) });
         if (!response.ok) throw new Error(await readSkillApiError(response));
         const result = await response.json();
-        document.getElementById('skill-install-created').innerHTML = `<div class="skill-install-created"><strong>安装链接已创建</strong><div><input id="skill-install-created-url" type="text" readonly value="${escapeAttr(result.url)}"><button class="btn btn-secondary btn-small" type="button" onclick="copyCreatedSkillInstallUrl()">再次复制</button></div><span>请保存此链接，历史记录仅展示状态和使用次数。</span></div>`;
+        document.getElementById('skill-install-created').innerHTML = `<div class="skill-share-card skill-share-card-result"><h4 class="skill-share-success">安装链接已创建</h4><div class="skill-share-url-row"><input id="skill-install-created-url" type="text" readonly value="${escapeAttr(result.url)}"><button class="btn btn-primary btn-small" type="button" onclick="copyCreatedSkillInstallUrl()">复制</button></div><span class="skill-share-tip">请保存此链接，历史记录仅展示状态和使用次数。</span></div>`;
         const copied = await copySkillInstallUrl('skill-install-created-url');
         if (copied) showToast('远程安装链接已创建并复制', 'success');
         else showToast('安装链接已创建，请从文本框手动复制', 'info');
