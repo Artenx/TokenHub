@@ -200,7 +200,7 @@ function initEventListeners() {
     document.getElementById('login-form').addEventListener('submit', handleLogin);
 
     // 导航切换
-    document.querySelectorAll('.nav-btn').forEach(btn => {
+    document.querySelectorAll('[data-tab]').forEach(btn => {
         btn.addEventListener('click', () => switchTab(btn.dataset.tab));
     });
 
@@ -1733,7 +1733,7 @@ async function handleResetAll() {
 
 // 切换标签页
 function switchTab(tab) {
-    document.querySelectorAll('.nav-btn').forEach(btn => {
+    document.querySelectorAll('[data-tab]').forEach(btn => {
         const isActive = btn.dataset.tab === tab;
         btn.classList.toggle('active', isActive);
         btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
