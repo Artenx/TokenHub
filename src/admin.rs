@@ -17,6 +17,7 @@ use tokio::net::lookup_host;
 struct GithubSkillLink {
     archive_url: Url,
     directory: String,
+    repository: String,
 }
 
 fn github_skill_link(url: &Url) -> Result<GithubSkillLink, AppError> {
@@ -38,15 +39,15 @@ fn github_skill_link(url: &Url) -> Result<GithubSkillLink, AppError> {
     };
     let archive_url = Url::parse(&format!("https://codeload.github.com/{owner}/{repository}/zip/{version}"))
         .map_err(|error| AppError::Internal(error.to_string()))?;
-    Ok(GithubSkillLink { archive_url, directory })
+    Ok(GithubSkillLink { archive_url, directory, repository: repository.to_string() })
 }
 
-fn isolate_github_skill_archive(archive: &[u8], skill_directory: &str) -> Result<Vec<u8>, AppError> {
+fn isolate_github_skill_archive(archive: &[u8], skill_directory: &str, repository: &str) -> Result<Vec<u8>, AppError> {
     let mut source = zip::ZipArchive::new(Cursor::new(archive))
         .map_err(|error| AppError::BadRequest(format!("读取 GitHub 归档失败: {}", error)))?;
     let is_repository_root = skill_directory.is_empty();
     let root = if is_repository_root {
-        "github-skill"
+        if repository.is_empty() { "github-skill" } else { repository }
     } else {
         skill_directory.rsplit('/').next().filter(|name| !name.is_empty())
             .ok_or_else(|| AppError::BadRequest("GitHub 技能目录无效".to_string()))?
@@ -1658,9 +1659,9 @@ pub async fn preview_remote_skill(state: web::Data<AppState>, req: HttpRequest, 
     if !permitted {
         return Err(AppError::BadRequest("技能包下载地址不属于所选公开来源".to_string()));
     }
-    let (download_url, github_skill_directory) = if matches!(source.source_type, SkillSourceType::Github) && archive_url.host_str() == Some("github.com") {
+    let (download_url, github_skill) = if matches!(source.source_type, SkillSourceType::Github) && archive_url.host_str() == Some("github.com") {
         let github_link = github_skill_link(&archive_url)?;
-        (github_link.archive_url, Some(github_link.directory))
+        (github_link.archive_url, Some((github_link.directory, github_link.repository)))
     } else {
         (archive_url.clone(), None)
     };
@@ -1675,8 +1676,8 @@ pub async fn preview_remote_skill(state: web::Data<AppState>, req: HttpRequest, 
         return Err(AppError::BadRequest("技能包下载内容超过总容量上限".to_string()));
     }
     let archive = response.bytes().await.map_err(|error| AppError::BadRequest(format!("读取技能包失败: {}", error)))?;
-    let archive = github_skill_directory
-        .map(|directory| isolate_github_skill_archive(&archive, &directory))
+    let archive = github_skill
+        .map(|(directory, repository)| isolate_github_skill_archive(&archive, &directory, &repository))
         .transpose()?
         .unwrap_or_else(|| archive.to_vec());
     let origin = SkillOrigin { source_type: source.source_type, url: archive_url.to_string(), version: input.version, content_digest: None };
@@ -1689,16 +1690,16 @@ pub async fn preview_skill_link(state: web::Data<AppState>, req: HttpRequest, bo
     check_admin_auth(&req, state.get_ref())?;
     let input = body.into_inner();
     let source_url = parse_public_skill_link(&input.url)?;
-    let (download_url, github_skill_directory, source_type) = if source_url.host_str() == Some("github.com") {
+    let (download_url, github_skill, source_type) = if source_url.host_str() == Some("github.com") {
         let github_link = github_skill_link(&source_url)?;
-        (github_link.archive_url, Some(github_link.directory), SkillSourceType::Github)
+        (github_link.archive_url, Some((github_link.directory, github_link.repository)), SkillSourceType::Github)
     } else {
         (source_url.clone(), None, SkillSourceType::CustomIndex)
     };
     let (root, config) = skill_repository_root(state.get_ref())?;
     let archive = download_public_skill_archive(&download_url, config.max_total_size_bytes).await?;
-    let archive = github_skill_directory
-        .map(|directory| isolate_github_skill_archive(&archive, &directory))
+    let archive = github_skill
+        .map(|(directory, repository)| isolate_github_skill_archive(&archive, &directory, &repository))
         .transpose()?
         .unwrap_or(archive);
     let origin = SkillOrigin { source_type, url: source_url.to_string(), version: None, content_digest: None };
@@ -1752,7 +1753,7 @@ mod benchmark_tests {
         archive.write_all(b"Details").unwrap();
         archive.start_file("repo-HEAD/skills/other/SKILL.md", zip::write::FileOptions::default()).unwrap();
         archive.write_all(b"# Other").unwrap();
-        let isolated = isolate_github_skill_archive(&archive.finish().unwrap().into_inner(), "skills/review").unwrap();
+        let isolated = isolate_github_skill_archive(&archive.finish().unwrap().into_inner(), "skills/review", "skills").unwrap();
         let isolated = zip::ZipArchive::new(Cursor::new(isolated)).unwrap();
         let mut names = isolated.file_names().collect::<Vec<_>>();
         names.sort_unstable();
@@ -1788,11 +1789,11 @@ mod benchmark_tests {
         archive.write_all(b"# Root skill").unwrap();
         archive.start_file("repo-main/README.md", zip::write::FileOptions::default()).unwrap();
         archive.write_all(b"Details").unwrap();
-        let isolated = isolate_github_skill_archive(&archive.finish().unwrap().into_inner(), "").unwrap();
+        let isolated = isolate_github_skill_archive(&archive.finish().unwrap().into_inner(), "", "OfficeCLI").unwrap();
         let isolated = zip::ZipArchive::new(Cursor::new(isolated)).unwrap();
         let mut names = isolated.file_names().collect::<Vec<_>>();
         names.sort_unstable();
-        assert_eq!(names, vec!["github-skill/README.md", "github-skill/SKILL.md"]);
+        assert_eq!(names, vec!["OfficeCLI/README.md", "OfficeCLI/SKILL.md"]);
     }
 
     #[test]
@@ -1805,11 +1806,11 @@ mod benchmark_tests {
         archive.write_all(b"# One").unwrap();
         archive.start_file("repo-main/skills/two/SKILL.md", zip::write::FileOptions::default()).unwrap();
         archive.write_all(b"# Two").unwrap();
-        let isolated = isolate_github_skill_archive(&archive.finish().unwrap().into_inner(), "").unwrap();
+        let isolated = isolate_github_skill_archive(&archive.finish().unwrap().into_inner(), "", "skills").unwrap();
         let isolated = zip::ZipArchive::new(Cursor::new(isolated)).unwrap();
         let mut names = isolated.file_names().collect::<Vec<_>>();
         names.sort_unstable();
-        assert_eq!(names, vec!["github-skill/README.md", "github-skill/skills/one/SKILL.md", "github-skill/skills/two/SKILL.md"]);
+        assert_eq!(names, vec!["skills/README.md", "skills/skills/one/SKILL.md", "skills/skills/two/SKILL.md"]);
     }
 
     #[test]
@@ -1822,6 +1823,7 @@ mod benchmark_tests {
         let link = github_skill_link(&Url::parse("https://github.com/acme/skills").unwrap()).unwrap();
         assert_eq!(link.archive_url.as_str(), "https://codeload.github.com/acme/skills/zip/HEAD");
         assert!(link.directory.is_empty());
+        assert_eq!(link.repository, "skills");
     }
 
     #[test]
