@@ -4272,8 +4272,18 @@ async function createSkillInstallLink(directoryName) {
         const response = await fetch(`${API_BASE}/skills/${encodeURIComponent(directoryName)}/install-links`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expires_in_minutes: expiresInMinutes, single_use: document.getElementById('skill-install-single-use').checked }) });
         if (!response.ok) throw new Error(await readSkillApiError(response));
         const result = await response.json();
-        await navigator.clipboard.writeText(result.url);
-        showToast('远程安装链接已创建并复制', 'success');
+        let copied = false;
+        if (navigator.clipboard?.writeText && window.isSecureContext) {
+            try {
+                await navigator.clipboard.writeText(result.url);
+                copied = true;
+            } catch (_) {}
+        }
+        if (copied) showToast('远程安装链接已创建并复制', 'success');
+        else {
+            window.prompt('安装链接已创建，请复制以下链接：', result.url);
+            showToast('远程安装链接已创建，请手动复制链接', 'info');
+        }
         openSkillDetails(`local:${directoryName}`);
     } catch (error) { showToast(`创建安装链接失败: ${error.message}`, 'error'); }
 }
