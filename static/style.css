@@ -1530,7 +1530,10 @@ nav {
 .skill-error { color: var(--danger); }
 
 .skill-search-form { display: flex; gap: 0.625rem; margin-bottom: 1rem; }
-.skill-search-form input { flex: 1; }
+.skill-search-form input, .skill-local-toolbar input, .skill-link-import-form input { padding: 0.625rem 0.875rem; border: 1px solid var(--input); border-radius: var(--radius-sm); background: var(--background); color: var(--foreground); font-family: var(--font-sans); font-size: 0.875rem; line-height: 1.25rem; transition: all 0.15s ease; }
+.skill-search-form input:focus, .skill-local-toolbar input:focus, .skill-link-import-form input:focus { outline: none; border-color: var(--ring); box-shadow: 0 0 0 3px rgba(180, 83, 9, 0.15); }
+.skill-search-form input::placeholder, .skill-local-toolbar input::placeholder, .skill-link-import-form input::placeholder { color: var(--text-tertiary); }
+.skill-search-form input { flex: 1; min-width: 0; }
 .skill-link-import-form { display: grid; grid-template-columns: minmax(190px, 0.8fr) minmax(220px, 2fr) auto; align-items: center; gap: 0.75rem; margin-bottom: 1rem; padding: 0.875rem 1rem; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-secondary); }
 .skill-link-import-form div { display: flex; flex-direction: column; gap: 0.2rem; }
 .skill-link-import-form strong { color: var(--text-primary); font-size: 0.8125rem; }
@@ -1583,7 +1586,7 @@ nav {
 .skill-collection-meta { flex-shrink: 0; display: flex; align-items: center; gap: 0.5rem; color: var(--text-secondary); font-size: 0.6875rem; }
 
 .skill-local-toolbar { margin-bottom: 0.625rem; }
-.skill-local-toolbar input { width: 100%; padding: 0.5rem 0.75rem; }
+.skill-local-toolbar input { width: 100%; }
 .skill-tag-filters { display: flex; flex-wrap: wrap; gap: 0.375rem; margin-bottom: 0.875rem; }
 .skill-tag-filters:empty { margin-bottom: 0; }
 .skill-tag-filter { padding: 0.2rem 0.625rem; border: 1px solid var(--border); border-radius: 999px; background: var(--background); color: var(--text-secondary); font-size: 0.6875rem; font-weight: 500; cursor: pointer; transition: all 0.15s ease; }
