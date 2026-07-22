@@ -4227,15 +4227,30 @@ async function openSkillDetails(id) {
         const linksResponse = await fetch(`${API_BASE}/skills/${encodeURIComponent(skill.directory_name)}/install-links`);
         if (!linksResponse.ok) throw new Error(await readSkillApiError(linksResponse));
         const installLinks = await linksResponse.json();
+        const canUpdateFromSource = /^https:\/\//.test(skill.source?.url || '');
         document.getElementById('skill-modal-title').textContent = skill.name;
         const tagChips = (skill.tags || []).map(tag => `<span class="skill-tag skill-tag-removable">${escapeHtml(tag)}<button type="button" aria-label="移除标签 ${escapeAttr(tag)}" onclick="removeSkillTag('${escapeAttr(skill.directory_name)}', '${escapeAttr(tag)}')">×</button></span>`).join('');
         document.getElementById('skill-modal-body').innerHTML = `<div class="skill-detail-meta"><span class="skill-status ${skill.validation_status === 'valid' ? 'valid' : 'invalid'}">${escapeHtml(skill.validation_status)}</span><code>${escapeHtml(skill.directory_name)}</code><span>${skill.file_count} 个文件</span></div><p class="skill-detail-description">${escapeHtml(skill.description || '未提供描述')}</p>
             <h3>标签</h3><div class="skill-tag-editor"><div class="skill-tag-editor-chips">${tagChips || '<span class="skill-tag-empty">暂无标签</span>'}</div><div class="skill-tag-editor-input"><input id="skill-tag-input" type="text" maxlength="20" placeholder="添加标签，如：前端ui" onkeydown="if(event.key==='Enter'){event.preventDefault();addSkillTag('${escapeAttr(skill.directory_name)}')}"><button class="btn btn-secondary btn-small" type="button" onclick="addSkillTag('${escapeAttr(skill.directory_name)}')">添加</button></div></div>
             <h3>远程安装链接</h3><div class="skill-install-create"><select id="skill-install-expiry"><option value="60">1 小时</option><option value="1440" selected>24 小时</option><option value="10080">7 天</option><option value="43200">30 天</option><option value="custom">自定义</option></select><input id="skill-install-custom-expiry" type="number" min="60" max="525600" placeholder="分钟" hidden><label><input id="skill-install-single-use" type="checkbox"> 首次下载后失效</label><button class="btn btn-secondary btn-small" type="button" onclick="createSkillInstallLink('${escapeAttr(skill.directory_name)}')">创建并复制</button></div><div class="skill-install-links">${renderSkillInstallLinks(skill.directory_name, installLinks)}</div>
             <h3>SKILL.md</h3><pre class="skill-code">${escapeHtml(skillMd)}</pre><h3>文件清单</h3><ul class="skill-file-list">${files.map(file => `<li><code>${escapeHtml(file)}</code></li>`).join('')}</ul>`;
-        document.getElementById('skill-modal-actions').innerHTML = `<button class="btn btn-secondary" type="button" onclick="hideModal('skill-modal')">关闭</button><a class="btn btn-primary" href="${API_BASE}/skills/${encodeURIComponent(skill.directory_name)}/download" download>下载离线包</a><button class="btn btn-danger" type="button" onclick="confirmSkillDelete('${escapeAttr(skill.directory_name)}')">删除技能</button>`;
+        document.getElementById('skill-modal-actions').innerHTML = `<button class="btn btn-secondary" type="button" onclick="hideModal('skill-modal')">关闭</button><a class="btn btn-primary" href="${API_BASE}/skills/${encodeURIComponent(skill.directory_name)}/download" download>下载离线包</a>${canUpdateFromSource ? `<button class="btn btn-secondary" type="button" onclick="previewSkillUpdate('${escapeAttr(skill.id)}', '${escapeAttr(skill.source.url)}', '${escapeAttr(skill.source.content_digest || '')}')">检查在线更新</button>` : ''}<button class="btn btn-danger" type="button" onclick="confirmSkillDelete('${escapeAttr(skill.directory_name)}')">删除技能</button>`;
         showModal('skill-modal');
     } catch (error) { showToast(`无法读取技能详情: ${error.message}`, 'error'); }
+}
+
+async function previewSkillUpdate(id, sourceUrl, previousDigest) {
+    try {
+        showToast('正在拉取原始链接并检查更新...', 'info');
+        const response = await fetch(`${API_BASE}/skill-links/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: sourceUrl }) });
+        if (!response.ok) throw new Error(await readSkillApiError(response));
+        const preview = await response.json();
+        if (previousDigest && preview.source?.content_digest === previousDigest) {
+            showToast('当前本地技能已是最新版本', 'success');
+            return;
+        }
+        showSkillImportPreview(preview, '在线更新预览');
+    } catch (error) { showToast(`检查在线更新失败: ${error.message}`, 'error'); }
 }
 
 function renderSkillInstallLinks(directoryName, links) {

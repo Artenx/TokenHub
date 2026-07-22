@@ -1506,6 +1506,10 @@ fn install_token_digest(token: &str) -> String {
     format!("{:x}", Sha256::digest(token.as_bytes()))
 }
 
+fn skill_content_digest(archive: &[u8]) -> String {
+    format!("sha256:{:x}", Sha256::digest(archive))
+}
+
 fn install_link_view(link: &SkillInstallLink) -> serde_json::Value {
     json!({
         "id": link.id,
@@ -1787,7 +1791,7 @@ pub async fn preview_remote_skill(state: web::Data<AppState>, req: HttpRequest, 
         .map(|(directory, repository)| isolate_github_skill_archive(&archive, &directory, &repository))
         .transpose()?
         .unwrap_or_else(|| archive.to_vec());
-    let origin = SkillOrigin { source_type: source.source_type, url: archive_url.to_string(), version: input.version, content_digest: None };
+    let origin = SkillOrigin { source_type: source.source_type, url: archive_url.to_string(), version: input.version, content_digest: Some(skill_content_digest(&archive)) };
     let (preview, packages) = preview_zip_archive(&archive, origin, &root, &config).map_err(|error| AppError::BadRequest(error.to_string()))?;
     state.store_skill_import_preview(preview.clone(), packages);
     Ok(HttpResponse::Ok().json(preview))
@@ -1809,7 +1813,7 @@ pub async fn preview_skill_link(state: web::Data<AppState>, req: HttpRequest, bo
         .map(|(directory, repository)| isolate_github_skill_archive(&archive, &directory, &repository))
         .transpose()?
         .unwrap_or(archive);
-    let origin = SkillOrigin { source_type, url: source_url.to_string(), version: None, content_digest: None };
+    let origin = SkillOrigin { source_type, url: source_url.to_string(), version: None, content_digest: Some(skill_content_digest(&archive)) };
     let (preview, packages) = preview_zip_archive(&archive, origin, &root, &config)
         .map_err(|error| AppError::BadRequest(error.to_string()))?;
     state.store_skill_import_preview(preview.clone(), packages);
