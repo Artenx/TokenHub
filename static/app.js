@@ -4392,6 +4392,10 @@ async function confirmSkillImport(previewId, replace) {
         const count = result.imported || 1;
         hideModal('skill-modal');
         showToast(count > 1 ? `已导入 ${count} 个技能包` : (replace ? '技能包已替换' : '技能包已导入'), 'success');
+        localSkillSearchTerm = '';
+        selectedSkillTags.clear();
+        const searchInput = document.getElementById('skill-local-search');
+        if (searchInput) searchInput.value = '';
         await loadLocalSkills();
         switchSkillView('local');
     } catch (error) { showToast(`导入失败: ${error.message}`, 'error'); }
