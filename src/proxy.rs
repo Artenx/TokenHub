@@ -31,8 +31,12 @@ fn capture_body(body: &[u8], max_size_kb: usize) -> (String, bool) {
     if body.len() <= max_bytes {
         (String::from_utf8_lossy(body).into_owned(), false)
     } else {
-        let slice = &body[..max_bytes];
-        (String::from_utf8_lossy(slice).into_owned(), true)
+        let cutoff = match std::str::from_utf8(&body[..max_bytes]) {
+            Ok(_) => max_bytes,
+            Err(e) => e.valid_up_to(),
+        };
+        let valid_slice = &body[..cutoff];
+        (String::from_utf8_lossy(valid_slice).into_owned(), true)
     }
 }
 
@@ -787,7 +791,7 @@ pub async fn forward_stream_request(
 
         let mut resp_status = response.as_ref().unwrap().status();
         if resp_status != 200 {
-            let error_body = response.take().unwrap().text().await.unwrap_or_default();
+            let error_body = String::from_utf8_lossy(&response.take().unwrap().bytes().await.unwrap_or_default()).into_owned();
 
             // 如果是 400 + 参数不支持，自动剥离参数后重试同一端点
             if resp_status == 400 {
@@ -795,7 +799,7 @@ pub async fn forward_stream_request(
                     let retry_builder = build_upstream_request(state.get_ref(), req, &endpoint, &target_url, &stripped);
                     if let Ok(builder) = retry_builder {
                         match send_request(builder, &endpoint.config.name, endpoint.config.timeout).await {
-                            Ok(retry) => {
+                Ok(retry) => {
                                 let retry_status = retry.status();
                                 if retry_status == 200 {
                                     debug!("端点 {} 流式剥离参数后重试成功", endpoint.config.name);
@@ -1286,7 +1290,7 @@ async fn forward_to_endpoint(
         return process_upstream_success(state, endpoint, response, status, &headers, start, path, client_api_type).await;
     }
 
-    let error_body = response.text().await.unwrap_or_default();
+    let error_body = String::from_utf8_lossy(&response.bytes().await.unwrap_or_default()).into_owned();
     let duration_ms = start.elapsed().as_millis() as u64;
     state.record_latency(&endpoint.config.id, duration_ms);
 
@@ -1302,7 +1306,7 @@ async fn forward_to_endpoint(
                         let retry_headers = retry.headers().clone();
                         return process_upstream_success(state, endpoint, retry, retry_status, &retry_headers, start, path, client_api_type).await;
                     }
-                    let retry_error_body = retry.text().await.unwrap_or_default();
+                    let retry_error_body = String::from_utf8_lossy(&retry.bytes().await.unwrap_or_default()).into_owned();
                     let retry_duration = start.elapsed().as_millis() as u64;
                     state.record_latency(&endpoint.config.id, retry_duration);
                     error!("端点 {} 剥离参数后仍然失败 {}: {}", endpoint.config.name, retry_status, retry_error_body);
