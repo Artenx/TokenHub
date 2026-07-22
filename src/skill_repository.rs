@@ -44,6 +44,9 @@ pub fn scan_local_skills(root: &Path, config: &SkillRepositoryConfig) -> Result<
             continue;
         }
         let directory_name = entry.file_name().to_string_lossy().to_string();
+        if directory_name.starts_with('.') {
+            continue;
+        }
         let id = format!("local:{}", directory_name);
         match read_skill_directory(&path, config) {
             Ok(package) => skills.push(LocalSkill {
