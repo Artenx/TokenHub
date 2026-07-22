@@ -1578,16 +1578,25 @@ pub async fn download_skill_install_link(state: web::Data<AppState>, path: web::
     let token = path.into_inner();
     let digest = install_token_digest(&token);
     let now = Utc::now();
-    let mut repository = state.skill_repository_state();
-    let Some(link) = repository.install_links.iter_mut().find(|link| link.token_digest == digest) else { return Ok(HttpResponse::NotFound().finish()); };
-    let valid = link.revoked_at.is_none() && now < link.expires_at && (!link.single_use || link.downloaded_at.is_none());
     let (root, _) = skill_repository_root(state.get_ref()).map_err(|_| AppError::NotFound("安装链接不存在".to_string()))?;
-    if !valid || !root.join(&link.directory_name).is_dir() { return Ok(HttpResponse::NotFound().finish()); }
-    let archive = match std::fs::read(root.join(&link.snapshot_path)) { Ok(archive) => archive, Err(_) => return Ok(HttpResponse::NotFound().finish()) };
-    link.download_count += 1;
-    link.downloaded_at = Some(now);
-    let directory_name = link.directory_name.clone();
-    state.update_skill_repository_state(repository);
+    let (directory_name, snapshot_path) = {
+        let repository = state.skill_repository.read();
+        let Some(link) = repository.install_links.iter().find(|link| link.token_digest == digest) else { return Ok(HttpResponse::NotFound().finish()); };
+        let valid = link.revoked_at.is_none() && now < link.expires_at && (!link.single_use || link.downloaded_at.is_none());
+        if !valid { return Ok(HttpResponse::NotFound().finish()); }
+        (link.directory_name.clone(), link.snapshot_path.clone())
+    };
+    if !root.join(&directory_name).is_dir() { return Ok(HttpResponse::NotFound().finish()); }
+    let archive = match std::fs::read(root.join(snapshot_path)) { Ok(archive) => archive, Err(_) => return Ok(HttpResponse::NotFound().finish()) };
+    {
+        let mut repository = state.skill_repository.write();
+        let Some(link) = repository.install_links.iter_mut().find(|link| link.token_digest == digest) else { return Ok(HttpResponse::NotFound().finish()); };
+        let valid = link.revoked_at.is_none() && now < link.expires_at && (!link.single_use || link.downloaded_at.is_none());
+        if !valid { return Ok(HttpResponse::NotFound().finish()); }
+        link.download_count += 1;
+        link.downloaded_at = Some(now);
+    }
+    state.mark_dirty();
     add_skill_audit(state.get_ref(), "install-link-download", &directory_name, None, "success", None);
     Ok(HttpResponse::Ok().content_type("application/zip").insert_header(("Content-Disposition", format!("attachment; filename=\"{}.zip\"", directory_name))).body(archive))
 }
