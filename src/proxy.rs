@@ -1471,6 +1471,11 @@ mod tests {
         let (body, truncated) = capture_body(&input, 1);
         assert_eq!(body.len(), 1024);
         assert!(truncated);
+
+        let input = "中".repeat(342);
+        let (body, truncated) = capture_body(input.as_bytes(), 1);
+        assert_eq!(body, "中".repeat(341));
+        assert!(truncated);
     }
 
     #[test]
